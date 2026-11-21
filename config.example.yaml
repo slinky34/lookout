@@ -1,0 +1,52 @@
+# Lookout config. Copy to config/config.yaml. Everything is optional.
+# ${VAR} reads an environment variable (from .env), so secrets can stay out of this file.
+
+# How often to check: 30m, 6h, 1d, 1h30m ... (minimum 1 minute)
+interval: 6h
+run_on_start: true
+
+# Also send a notice when a check fails (registry down, bad token...).
+# Each distinct set of errors is sent once, not every run.
+notify_errors: false
+
+docker:
+  enabled: true
+  # host: tcp://docker-proxy:2375   # default: the mounted /var/run/docker.sock
+  watch_by_default: true            # false = only containers labelled lookout.enable=true
+  check_new_tags: true              # nginx:1.25.3 -> also tell me when 1.27.0 exists
+  include_stopped: false
+  exclude:                          # container names or regexes
+    # - lookout
+    # - "test-.*"
+
+# Logins for private images. Public images need nothing.
+registries:
+  # ghcr.io:
+  #   username: slinky34
+  #   password: ${GHCR_TOKEN}        # a GitHub token with read:packages
+  # docker.io:
+  #   username: me
+  #   password: ${DOCKERHUB_TOKEN}
+
+github:
+  token: ${GITHUB_TOKEN}            # optional, raises the rate limit
+  include_prereleases: false
+  repos:
+    - slinky34/hearth-ha
+    # - home-assistant/core
+    # - repo: immich-app/immich
+    #   include_prereleases: true
+
+notify:
+  discord:
+    webhook_url: ${DISCORD_WEBHOOK_URL}
+    username: Lookout
+  ntfy:
+    url: ${NTFY_URL}                 # e.g. https://ntfy.sh/my-secret-topic
+    token: ${NTFY_TOKEN}
+    priority: default                # min, low, default, high, urgent
+    tags: package
+  gotify:
+    url: ${GOTIFY_URL}               # e.g. https://gotify.example.com
+    token: ${GOTIFY_TOKEN}           # an application token
+    priority: 5
