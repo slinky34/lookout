@@ -1,5 +1,6 @@
 # Lookout: dashboard + notifications for updates to your containers, other Docker
-# hosts, images and GitHub releases. It only reads; it never pulls or restarts anything.
+# hosts, Portainer environments, images and GitHub releases. It changes nothing unless
+# you click Update in the dashboard and confirm, and then only through Portainer.
 #
 #   docker compose up -d
 #   open http://<server>:18099 and add notifications, repos and hosts there
@@ -21,6 +22,9 @@ services:
       NTFY_URL: ${NTFY_URL:-}
       GITHUB_REPOS: ${GITHUB_REPOS:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Portainer: watch every environment and update stacks from the dashboard.
+      PORTAINER_URL: ${PORTAINER_URL:-}
+      PORTAINER_TOKEN: ${PORTAINER_TOKEN:-}
       # Ask for a password before showing the dashboard (any username works):
       LOOKOUT_PASSWORD: ${LOOKOUT_PASSWORD:-}
     volumes:

@@ -71,9 +71,11 @@ class DockerWatcher:
 
         groups: dict[str, list] = defaultdict(list)
         ignored: list[str] = []
+        ignored_ids: list[str] = []
         for c in containers:
             if not self._wanted(c):
                 ignored.append(c.name)
+                ignored_ids.append(getattr(c, "id", None))
                 continue
             ref_text = (c.attrs.get("Config") or {}).get("Image") or ""
             groups[ref_text].append(c)
@@ -84,7 +86,12 @@ class DockerWatcher:
         for ref_text, members in sorted(groups.items()):
             names = sorted(c.name for c in members)
             row = {"ref": ref_text, "containers": names, "status": "ok", "reason": None,
-                   "newest_tag": None, "digest_update": False, "url": None}
+                   "newest_tag": None, "digest_update": False, "url": None,
+                   "members": [{
+                       "id": getattr(c, "id", None), "name": c.name,
+                       "project": (c.labels or {}).get("com.docker.compose.project"),
+                       "service": (c.labels or {}).get("com.docker.compose.service"),
+                   } for c in sorted(members, key=lambda c: c.name)]}
             try:
                 row_updates = self._check_image(ref_text, members, row)
                 updates.extend(row_updates)
@@ -101,7 +108,7 @@ class DockerWatcher:
         result = {
             "id": self.host_id, "name": self.host_name, "url": self.url,
             "ok": True, "error": None, "checked_at": int(time.time()),
-            "images": images, "ignored": sorted(ignored),
+            "images": images, "ignored": sorted(ignored), "ignored_ids": [i for i in ignored_ids if i],
         }
         return result, updates, errors
 

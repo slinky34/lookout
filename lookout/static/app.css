@@ -151,6 +151,23 @@ h1, h2, h3, h4 { margin: 0; line-height: 1.25; }
 .rows .sub { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .rows .info { font-size: 13px; overflow-wrap: anywhere; }
 .rows .acts { display: flex; gap: 6px; justify-content: flex-end; }
+.rows.wide li { grid-template-columns: 96px minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.1fr) 150px; }
+.rows-head { display: grid; gap: 12px; padding: 7px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2);
+  font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.rows-head.wide { grid-template-columns: 96px minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.1fr) 150px; }
+.mgrs, .badges { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.mgr { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 2px 8px;
+  border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); max-width: 100%; overflow-wrap: anywhere; }
+.mgr em { font-style: normal; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 0 5px; border-radius: 4px; }
+.mgr.total { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.mgr.total em { background: var(--ok-soft); color: var(--ok); }
+.mgr.limited { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.mgr.limited em { background: var(--accent-soft); color: var(--accent); }
+.mgr.standalone { color: var(--muted); }
+.hint-inline { font-size: 12px; color: var(--muted); text-align: right; }
+.steps { margin: 8px 0; padding-left: 20px; }
+.steps li { margin: 4px 0; }
+.connect-hint { margin-top: 4px; }
 .empty { padding: 22px 14px; text-align: center; color: var(--muted); }
 .empty .btn { margin-top: 10px; }
 .ignored { padding: 8px 14px; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); background: var(--panel-2); }
@@ -213,7 +230,9 @@ textarea { resize: vertical; font-family: ui-monospace, "SF Mono", Menlo, Consol
 @media (max-width: 860px) {
   .tiles { grid-template-columns: repeat(2, 1fr); }
   .rows li { grid-template-columns: 1fr auto; }
-  .rows li { gap: 4px 12px; }
+  .rows li, .rows.wide li { grid-template-columns: 1fr auto; gap: 4px 12px; }
+  .rows-head { display: none; }
+  .rows li > .mgrs { grid-row: 4; grid-column: 1 / -1; }
   .rows li > .pill { grid-row: 1; grid-column: 1 / -1; }
   .rows li > .main { grid-row: 2; grid-column: 1; }
   .rows li > .acts { grid-row: 2; grid-column: 2; }
@@ -229,3 +248,4 @@ textarea { resize: vertical; font-family: ui-monospace, "SF Mono", Menlo, Consol
   .cards { grid-template-columns: 1fr; }
   .tabs { width: 100%; overflow-x: auto; }
 }
+.steps.done { list-style: none; padding-left: 0; }

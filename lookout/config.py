@@ -23,6 +23,13 @@ DEFAULTS: dict = {
         "exclude": [],                # container names or regexes to skip
     },
     "registries": {},                 # {"ghcr.io": {"username": ..., "password": ...}}
+    "portainer": {
+        "url": None,                  # e.g. https://192.168.1.10:9443
+        "token": None,                # Portainer access token (My account -> Access tokens)
+        "verify_tls": False,          # Portainer's default certificate is self-signed
+        "watch_all": True,            # watch every Portainer environment's containers
+        "allow_updates": True,        # show Update buttons that redeploy through Portainer
+    },
     "github": {
         "token": None,
         "repos": [],
@@ -62,7 +69,11 @@ def _merge(base: dict, over: dict) -> dict:
 def _env_overrides() -> dict:
     """Let a docker-compose file configure the basics without a config file."""
     e = os.environ.get
-    o: dict = {"notify": {"discord": {}, "ntfy": {}, "gotify": {}}, "github": {}, "docker": {}}
+    o: dict = {"notify": {"discord": {}, "ntfy": {}, "gotify": {}}, "github": {}, "docker": {}, "portainer": {}}
+    if e("PORTAINER_URL"):
+        o["portainer"]["url"] = e("PORTAINER_URL")
+    if e("PORTAINER_TOKEN"):
+        o["portainer"]["token"] = e("PORTAINER_TOKEN")
     if e("LOOKOUT_INTERVAL"):
         o["interval"] = e("LOOKOUT_INTERVAL")
     if e("DISCORD_WEBHOOK_URL"):

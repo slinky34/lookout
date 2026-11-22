@@ -67,6 +67,38 @@ function containerInfo(img) {
   if (img.newest_tag) bits.push(`Newer version <code>${esc(img.newest_tag)}</code>`);
   return bits.join(" · ") || `<span class="muted">Matches the registry</span>`;
 }
+// How each container is run: Portainer stack (total control), compose outside
+// Portainer (limited), or a standalone container.
+function managers(img) {
+  const seen = new Map();
+  for (const m of img.members || []) {
+    const g = m.manager || { type: m.project ? "compose" : "container", stack: m.project, control: null };
+    const key = `${g.type}:${g.stack || ""}`;
+    if (!seen.has(key)) seen.set(key, { ...g, names: [] });
+    seen.get(key).names.push(m.name);
+  }
+  return [...seen.values()];
+}
+function managerBadges(img) {
+  const list = managers(img);
+  if (!list.length) return `<span class="muted">—</span>`;
+  return list.map((g) => {
+    const tip = esc(g.why || "");
+    if (g.type === "stack") return `<span class="mgr total" title="Portainer stack · total control">Stack · ${esc(g.stack)}<em>Total</em></span>`;
+    if (g.type === "swarm") return `<span class="mgr limited" title="${tip}">Swarm · ${esc(g.stack)}</span>`;
+    if (g.type === "compose") return `<span class="mgr limited" title="${tip || "Compose project"}">Compose · ${esc(g.stack)}<em>${g.control === "limited" ? "Limited" : "Compose"}</em></span>`;
+    return `<span class="mgr standalone" title="${tip}">Standalone</span>`;
+  }).join("");
+}
+function updateAction(img, host) {
+  const s = ui.status;
+  if (img.status !== "update") return "";
+  const p = s.portainer || {};
+  if (!img.digest_update && img.newest_tag) return `<span class="hint-inline">Change the tag to <code>${esc(img.newest_tag)}</code> to update</span>`;
+  if (!p.connected || !p.allow_updates) return "";
+  if (!img.can_update) return `<span class="hint-inline" title="${esc((managers(img)[0] || {}).why || "")}">Update outside Portainer</span>`;
+  return `<button class="btn tiny primary" data-update="${esc(host.id)}" data-ref="${esc(img.ref)}">Update</button>`;
+}
 function imageInfo(i) {
   if (i.status === "error") return esc(i.error);
   if (i.status === "pending") return `<span class="muted">Getting the current image…</span>`;
@@ -86,9 +118,11 @@ function repoInfo(r) {
 function collectUpdates(s) {
   const out = [];
   for (const h of s.hosts) for (const img of h.images) if (img.status === "update") {
+    const action = updateAction(img, h);
     out.push({ kind: "Container", name: img.ref, what: containerInfo(img), url: img.url,
       where: `${img.containers.join(", ")}${s.hosts.length > 1 ? ` on ${h.name}` : ""}`,
-      hint: "Pull the new image and recreate the container to update." });
+      badges: managerBadges(img), action,
+      hint: action ? "" : "Pull the new image and recreate the container to update." });
   }
   for (const i of s.images) if (i.status === "update") {
     out.push({ kind: "Image", name: i.label || i.ref, what: imageInfo(i), url: i.url,
@@ -136,7 +170,9 @@ function render() {
       <div class="card-top"><div class="name">${link(u.url, u.name)}</div><span class="kind">${u.kind}</span></div>
       <div class="what">${u.what}</div>
       ${u.where ? `<div class="where">${esc(u.where)}</div>` : ""}
+      ${u.badges ? `<div class="badges">${u.badges}</div>` : ""}
       ${u.hint ? `<div class="where">${esc(u.hint)}</div>` : ""}
+      ${u.action ? `<div class="acts">${u.action}</div>` : ""}
       ${u.ack ? `<div class="acts"><button class="btn tiny" data-ack="${u.ack[0]}:${u.ack[1]}">I've updated it</button></div>` : ""}
     </div>`).join("");
 
@@ -160,24 +196,33 @@ function render() {
     for (const h of s.hosts) {
       const rows = h.images.filter((i) => keep(i.status, i.ref, ...i.containers));
       const meta = h.checked_at ? `Checked ${ago(h.checked_at)}` : "Not checked yet";
+      const where = h.source === "portainer" ? "Portainer environment"
+        : (h.url ? esc(h.url) : "local Docker") + (h.portainer_env ? ` · Portainer “${esc(h.portainer_env)}”` : "");
       html += `<div class="panel">
         <div class="panel-head">
-          <h3>${hostIcon()} ${esc(h.name)} <span class="muted small">${h.url ? esc(h.url) : "local Docker"}</span></h3>
+          <h3>${hostIcon()} ${esc(h.name)} <span class="muted small">${where}</span></h3>
           <div class="row gap"><span class="meta">${meta} · ${h.images.length} image${h.images.length === 1 ? "" : "s"}</span>
             <button class="btn tiny" data-check="${esc(h.id)}">Check</button>
             ${h.removable ? `<button class="btn tiny danger" data-remove="hosts:${esc(h.id)}" data-name="${esc(h.name)}">Remove</button>` : ""}</div>
         </div>
         ${h.ok === false ? `<div class="panel-error">${esc(h.error)}</div>` : ""}
-        ${rows.length ? `<ul class="rows">${rows.map((i) => `
+        ${rows.length ? `<div class="rows-head wide"><span>Status</span><span>Image · containers</span><span>Managed by</span><span>Details</span><span></span></div>
+          <ul class="rows wide">${rows.map((i) => `
           <li>${pill(i.status)}
             <div class="main"><div class="title">${link(i.url, i.ref)}</div><div class="sub">${esc(i.containers.join(", "))}</div></div>
+            <div class="mgrs">${managerBadges(i)}</div>
             <div class="info">${containerInfo(i)}</div>
-            <div class="acts"></div></li>`).join("")}</ul>`
+            <div class="acts">${updateAction(i, h)}</div></li>`).join("")}</ul>`
           : `<div class="empty">${h.images.length ? "Nothing matches the filter." : h.ok === false ? "Can't see this host's containers right now." : h.checked_at ? "No running containers to watch." : "Waiting for the first check…"}</div>`}
         ${h.ignored.length ? `<div class="ignored">Ignored by label or settings: ${esc(h.ignored.join(", "))}</div>` : ""}
       </div>`;
     }
-    if (ui.tab === "containers") html += `<p class="muted small">Services on another machine? <a href="#" data-add="hosts">Add a Docker host</a> to watch all of its containers.</p>`;
+    if (!(s.portainer || {}).connected) {
+      html += `<p class="muted small connect-hint">Use Portainer? <a href="#" data-open-settings>Connect it</a> to watch every environment, see which stacks Portainer fully controls, and update them from here.</p>`;
+    } else if ((s.portainer || {}).error) {
+      html += `<p class="small msg-bad">Portainer: ${esc(s.portainer.error)}</p>`;
+    }
+    if (ui.tab === "containers") html += `<p class="muted small">Services on a machine outside Portainer? <a href="#" data-add="hosts">Add a Docker host</a> to watch all of its containers.</p>`;
   }
 
   if (show("images")) {
@@ -317,6 +362,7 @@ async function openSettings() {
   const msg = $("#settings-msg");
   msg.textContent = "";
   $("#notify-test").textContent = "";
+  $("#portainer-test").textContent = "";
   try {
     fillSettings(await api("GET", "/api/settings"));
   } catch (e) { msg.textContent = e.message; msg.className = "small msg-bad"; }
@@ -389,11 +435,76 @@ async function testNotify() {
   }
 }
 
+// ---------- update through Portainer ----------
+const upd = { host: null, ref: null };
+async function openUpdate(host, ref) {
+  upd.host = host; upd.ref = ref;
+  const body = $("#update-body");
+  const go = $("#btn-update-go");
+  $("#update-title").textContent = `Update ${ref}`;
+  body.innerHTML = `<p class="muted">Asking Portainer what runs this image…</p>`;
+  go.disabled = true;
+  go.hidden = false;
+  $("#dlg-update").showModal();
+  try {
+    const r = await api("POST", `/api/hosts/${encodeURIComponent(host)}/update`, { ref });
+    const p = r.plan;
+    body.innerHTML = (p.steps.length ? `
+        <p>Portainer will:</p>
+        <ul class="steps">${p.steps.map((s) => `<li>${esc(s.text)}${s.self ? ` <span class="pill update">restarts Lookout</span>` : ""}</li>`).join("")}</ul>
+        <p class="muted small">The newest images are pulled and the containers restart, so they'll be down for a moment. In a stack, other services restart only if their image also changed. Settings, volumes and the stack file stay as they are.</p>`
+      : `<p>Nothing here can be updated through Portainer.</p>`)
+      + (p.skipped.length ? `<p class="small"><strong>Not included:</strong></p><ul class="steps small">${p.skipped.map((s) => `<li>${esc(s.name)}: ${esc(s.why)}</li>`).join("")}</ul>` : "");
+    go.disabled = !p.steps.length;
+    go.hidden = !p.steps.length;
+  } catch (e) {
+    body.innerHTML = `<p class="msg-bad">${esc(e.message)}</p>`;
+    go.hidden = true;
+  }
+}
+async function runUpdate() {
+  const body = $("#update-body");
+  const go = $("#btn-update-go");
+  go.disabled = true;
+  go.textContent = "Updating…";
+  try {
+    const r = await api("POST", `/api/hosts/${encodeURIComponent(upd.host)}/update`, { ref: upd.ref, confirm: true });
+    body.innerHTML = `<ul class="steps done">${r.results.map((x) => x.ok
+      ? `<li class="msg-ok">✓ ${esc(x.target)}${x.note ? ` · ${esc(x.note)}` : ""}</li>`
+      : `<li class="msg-bad">✕ ${esc(x.target)}: ${esc(x.error)}</li>`).join("")}</ul>
+      <p class="muted small">Checking again to confirm…</p>`;
+    go.hidden = true;
+    soon();
+  } catch (e) {
+    // Updating Lookout's own stack can drop the connection while it restarts.
+    body.innerHTML = `<p class="msg-bad">${esc(e.message)}</p><p class="muted small">If this update included Lookout itself, it's restarting. The page will reconnect on its own.</p>`;
+    soon();
+  } finally {
+    go.textContent = "Update";
+  }
+}
+
+async function testPortainer() {
+  const out = $("#portainer-test");
+  out.className = "small";
+  out.textContent = "Saving and connecting…";
+  if (!(await saveSettings(false))) { out.textContent = ""; return; }
+  try {
+    const r = await api("POST", "/api/portainer/test");
+    out.className = "small msg-ok";
+    out.textContent = `Connected: ${r.environments} environment${r.environments === 1 ? "" : "s"}, ${r.stacks} stack${r.stacks === 1 ? "" : "s"}, ${r.containers} container${r.containers === 1 ? "" : "s"}.`;
+  } catch (e) {
+    out.className = "small msg-bad";
+    out.textContent = e.message;
+  }
+}
+
 // ---------- events ----------
 document.addEventListener("click", async (ev) => {
   const t = ev.target.closest("button, a");
   if (!t) return;
-  if (t.matches("[data-open-settings]")) return openSettings();
+  if (t.matches("[data-open-settings]")) { ev.preventDefault(); return openSettings(); }
+  if (t.dataset.update) return openUpdate(t.dataset.update, t.dataset.ref);
   if (t.dataset.add) { ev.preventDefault(); return openAdd(t.dataset.add); }
   if (t.dataset.check) return checkNow([t.dataset.check]);
   if (t.dataset.ack) {
@@ -420,6 +531,8 @@ $("#btn-test-host").addEventListener("click", testHost);
 $("#form-settings").addEventListener("submit", (e) => { e.preventDefault(); saveSettings(true); });
 for (const b of $$("[data-close]")) b.addEventListener("click", () => b.closest("dialog").close());
 $("#btn-test-notify").addEventListener("click", testNotify);
+$("#btn-test-portainer").addEventListener("click", testPortainer);
+$("#btn-update-go").addEventListener("click", runUpdate);
 $("#btn-copy-proxy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("#proxy-snippet").textContent); toast("Copied"); }
   catch { toast("Select the text and copy it"); }

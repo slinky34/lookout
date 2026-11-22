@@ -11,8 +11,8 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import __version__, imageref, notify
-from .checker import _docker_error, effective_config, host_list
+from . import __version__, imageref, notify, updater
+from .checker import _docker_error, effective_config, host_list, portainer_client
 from .docker_watch import connect
 from .models import Update
 from .store import Store, image_item, new_id, normalize_repo, repo_item
@@ -34,6 +34,11 @@ SETTINGS = {
     "watch_by_default": (("docker", "watch_by_default"), "bool"),
     "include_stopped": (("docker", "include_stopped"), "bool"),
     "notify_errors": (("notify_errors",), "bool"),
+    "portainer_url": (("portainer", "url"), "text"),
+    "portainer_token": (("portainer", "token"), "secret"),
+    "portainer_verify_tls": (("portainer", "verify_tls"), "bool"),
+    "portainer_watch_all": (("portainer", "watch_all"), "bool"),
+    "portainer_allow_updates": (("portainer", "allow_updates"), "bool"),
 }
 
 
@@ -126,11 +131,22 @@ def create_app(base_cfg: dict, store: Store, scheduler, password: str | None = N
             images = deepcopy(store.data["images"])
             last_run = store.data.get("last_run")
         hosts = []
-        for h in host_list(c, store):
+        listed = host_list(c, store)
+        if (c.get("portainer") or {}).get("watch_all"):
+            listed += [{"id": k, "name": r.get("name"), "url": None} for k, r in sorted(results.items())
+                       if k.startswith("pt-")]
+        for h in listed:
             r = results.get(h["id"]) or {}
-            hosts.append({**h, "removable": h["id"] != "local", "ok": r.get("ok"), "error": r.get("error"),
+            source = "portainer" if h["id"].startswith("pt-") else "docker"
+            hosts.append({**h, "source": source,
+                          "removable": source == "docker" and h["id"] != "local",
+                          "ok": r.get("ok"), "error": r.get("error"),
                           "checked_at": r.get("checked_at"), "images": r.get("images") or [],
-                          "ignored": r.get("ignored") or []})
+                          "ignored": r.get("ignored") or [], "portainer_env": r.get("portainer_env")})
+        pc = c.get("portainer") or {}
+        portainer = {"connected": bool(pc.get("url") and pc.get("token")),
+                     "allow_updates": bool(pc.get("allow_updates", True)),
+                     "error": next((r.get("portainer_error") for r in results.values() if r.get("portainer_error")), None)}
         for r in repos:
             r["status"] = _repo_status(r)
         for i in images:
@@ -151,7 +167,7 @@ def create_app(base_cfg: dict, store: Store, scheduler, password: str | None = N
             "interval": c["interval"],
             "notifiers": [n.name for n in notify.build(c.get("notify") or {})],
             "counts": {"updates": updates, "errors": errors, "watching": watching},
-            "hosts": hosts, "repos": repos, "images": images,
+            "hosts": hosts, "repos": repos, "images": images, "portainer": portainer,
         }
 
     @app.post("/api/check")
@@ -159,6 +175,46 @@ def create_app(base_cfg: dict, store: Store, scheduler, password: str | None = N
         only = (request.get_json(silent=True) or {}).get("only")
         scheduler.trigger(set(only) if only else None)
         return {"ok": True}
+
+    # -- Portainer -----------------------------------------------------------------
+
+    @app.post("/api/portainer/test")
+    def portainer_test():
+        client = portainer_client(cfg())
+        if client is None:
+            return _err("Add Portainer's address and an access token first.")
+        try:
+            s = client.summary()
+        except Exception as e:
+            return _err(str(e))
+        return {"ok": True, **s}
+
+    @app.post("/api/hosts/<host_id>/update")
+    def update_image(host_id):
+        """Body: {"ref": "...", "confirm": false} returns the plan; confirm=true runs it."""
+        body = request.get_json(force=True) or {}
+        c = cfg()
+        if not (c.get("portainer") or {}).get("allow_updates", True):
+            return _err("Updating from the dashboard is turned off in Settings.")
+        client = portainer_client(c)
+        if client is None:
+            return _err("Connect Portainer in Settings to update from here.")
+        with store.lock:
+            result = store.data["results"].get(host_id) or {}
+            row = next((deepcopy(r) for r in result.get("images") or [] if r["ref"] == body.get("ref")), None)
+        if row is None:
+            return _err("That image isn't on this host any more. Run a check and try again.", 404)
+        try:
+            p = updater.plan(client, row)
+        except Exception as e:
+            return _err(str(e))
+        if not body.get("confirm"):
+            return {"plan": updater.describe(p), "ref": row["ref"]}
+        if not p["steps"]:
+            return _err("Nothing here can be updated through Portainer.")
+        results = updater.run(client, p)
+        scheduler.trigger({host_id})
+        return {"results": results}
 
     # -- GitHub repos ------------------------------------------------------------
 

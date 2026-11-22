@@ -11,6 +11,7 @@ from . import config, imageref, notify, versions
 from .docker_watch import DockerWatcher, image_url, key_prefix
 from .github_watch import GitHubClient
 from .models import Update
+from .portainer import PortainerClient, PortainerDocker, classify
 from .registry import RegistryClient
 from .store import Store
 
@@ -36,13 +37,45 @@ def host_list(cfg: dict, store: Store) -> list[dict]:
     return hosts
 
 
+def portainer_client(cfg: dict):
+    p = cfg.get("portainer") or {}
+    if not p.get("url") or not p.get("token"):
+        return None
+    return PortainerClient(p["url"], p["token"], verify_tls=bool(p.get("verify_tls")))
+
+
+def annotate(row: dict, idx) -> None:
+    """Attach how each container is managed, plus a summary for the row."""
+    for m in row.get("members") or []:
+        m["manager"] = classify(m, idx)
+    mgrs = [m["manager"] for m in row.get("members") or []]
+    row["can_update"] = bool(mgrs) and any(x["can_update"] for x in mgrs)
+    # Re-pulling only helps when the tag itself got a new image.
+    row["update_fixes"] = bool(row.get("digest_update"))
+
+
 class Checker:
-    def __init__(self, base_cfg: dict, store: Store, docker_factory=None, registry=None, github=None):
+    def __init__(self, base_cfg: dict, store: Store, docker_factory=None, registry=None, github=None,
+                 portainer=None):
         self.base_cfg = base_cfg
         self.store = store
         self.docker_factory = docker_factory   # tests: (url) -> fake client
         self._registry = registry
         self._github = github
+        self._portainer = portainer            # tests: a fake PortainerClient
+
+    def portainer(self, cfg: dict):
+        return self._portainer if self._portainer is not None else portainer_client(cfg)
+
+    def portainer_index(self, cfg: dict):
+        client = self.portainer(cfg)
+        if client is None:
+            return None, None
+        try:
+            return client.index(), None
+        except Exception as e:
+            log.warning("Portainer: %s", e)
+            return None, str(e)
 
     def run(self, only: set[str] | None = None, dry_run: bool = False) -> list[Update]:
         """Check everything, or just the repo/image/host ids in `only`."""
@@ -53,15 +86,22 @@ class Checker:
         pending: list[Update] = []
         errors: list[str] = []
         clean_prefixes: list[str] = []   # sources checked cleanly; their stale keys get pruned
+        scanned: list[dict] = []
 
         # -- Docker hosts --------------------------------------------------
-        for host in host_list(cfg, self.store):
-            if only is not None and host["id"] not in only:
-                continue
+        pcfg = cfg.get("portainer") or {}
+        want_hosts = only is None or any(not (i in {x["id"] for x in self.store.data["images"]}
+                                              or i in {x["id"] for x in self.store.data["repos"]}) for i in only)
+        idx, perr = self.portainer_index(cfg) if want_hosts else (None, None)
+        if perr:
+            errors.append(f"Portainer: {perr}")
+
+        def scan(host, client):
             try:
-                client = self.docker_factory(host["url"]) if self.docker_factory else None
+                if client is None and self.docker_factory:
+                    client = self.docker_factory(host["url"])
                 w = DockerWatcher(cfg.get("docker") or {}, registry, client,
-                                  host_id=host["id"], host_name=host["name"], url=host["url"])
+                                  host_id=host["id"], host_name=host["name"], url=host.get("url"))
                 result, ups, errs = w.scan()
             except Exception as e:
                 msg = _docker_error(e)
@@ -70,17 +110,80 @@ class Checker:
                 with self.store.lock:
                     prev = self.store.data["results"].get(host["id"]) or {}
                     self.store.data["results"][host["id"]] = {
-                        **prev, "id": host["id"], "name": host["name"], "url": host["url"],
+                        **prev, "id": host["id"], "name": host["name"], "url": host.get("url"),
+                        "source": host.get("source", "docker"),
                         "ok": False, "error": msg, "checked_at": int(time.time()),
                         "images": prev.get("images") or [], "ignored": prev.get("ignored") or [],
                     }
-                continue
-            pending += ups
-            errors += errs
+                return None
+            pending.extend(ups)
+            errors.extend(errs)
             if not errs:
                 clean_prefixes.append(key_prefix(host["id"]))
+            result["source"] = host.get("source", "docker")
+            scanned.append(result)
             with self.store.lock:
+                prev = self.store.data["results"].get(host["id"]) or {}
+                for k in ("portainer_env", "portainer_env_id"):
+                    if k in prev:
+                        result[k] = prev[k]
                 self.store.data["results"][host["id"]] = result
+            return result
+
+        direct_ids: dict[str, set] = {}   # host id -> container ids seen directly
+        for host in host_list(cfg, self.store):
+            if only is not None and host["id"] not in only:
+                continue
+            result = scan(host, None)
+            if result:
+                direct_ids[host["id"]] = {m["id"] for row in result["images"]
+                                          for m in row.get("members") or [] if m.get("id")}
+                direct_ids[host["id"]] |= set(result.get("ignored_ids") or [])
+
+        # Every Portainer environment, through Portainer (no socket proxies needed).
+        if pcfg.get("watch_all") and idx is not None:
+            client = self.portainer(cfg)
+            seen_pt: set[str] = set()
+            for ep_id, ep_name in sorted(idx.endpoints.items()):
+                hid = f"pt-{ep_id}"
+                ep_ids = {cid for cid, e in idx.containers.items() if e["endpoint"] == ep_id}
+                seen_pt.add(hid)
+                if only is not None and hid not in only:
+                    continue
+                same = next((h for h, ids in direct_ids.items() if ids and ids & ep_ids), None)
+                if same is None and only is not None:
+                    # Partial check: rely on the link found by the last full check.
+                    with self.store.lock:
+                        same = next((k for k, r in self.store.data["results"].items()
+                                     if not k.startswith("pt-") and r.get("portainer_env_id") == ep_id), None)
+                if same:
+                    # Already read directly (e.g. this server); just note the link.
+                    with self.store.lock:
+                        r = self.store.data["results"].get(same)
+                        if r is not None:
+                            r["portainer_env"] = ep_name
+                            r["portainer_env_id"] = ep_id
+                        self.store.data["results"].pop(hid, None)
+                    continue
+                scan({"id": hid, "name": ep_name, "url": None, "source": "portainer"},
+                     PortainerDocker(client, ep_id))
+            if only is None:
+                with self.store.lock:
+                    for k in [k for k in self.store.data["results"] if k.startswith("pt-") and k not in seen_pt]:
+                        del self.store.data["results"][k]
+        elif only is None and not perr:
+            with self.store.lock:
+                for k in [k for k in self.store.data["results"] if k.startswith("pt-")]:
+                    del self.store.data["results"][k]
+
+        # -- what manages each container (Portainer stack, compose, standalone) --
+        with self.store.lock:
+            for result in scanned:
+                for row in result["images"]:
+                    annotate(row, idx)
+                    if not pcfg.get("allow_updates", True):
+                        row["can_update"] = False
+                result["portainer_error"] = perr
 
         # -- watched images ------------------------------------------------
         with self.store.lock:

@@ -159,6 +159,22 @@
         <span id="notify-test" class="small"></span>
       </div>
 
+      <h4>Portainer</h4>
+      <p class="muted small" style="margin:6px 0 0">Watch every Portainer environment without extra setup, see which stacks Portainer fully controls, and update them from here. Create a token in Portainer under <strong>My account → Access tokens</strong>.</p>
+      <div class="grid2">
+        <label class="field"><span>Portainer address</span>
+          <input id="s-portainer_url" placeholder="https://192.168.1.10:9443"></label>
+        <label class="field"><span>Access token</span>
+          <input id="s-portainer_token" data-secret autocomplete="off" placeholder="ptr_…"></label>
+      </div>
+      <label class="check"><input type="checkbox" id="s-portainer_watch_all"> Watch containers in every Portainer environment</label>
+      <label class="check"><input type="checkbox" id="s-portainer_allow_updates"> Show Update buttons (redeploy stacks / recreate containers through Portainer)</label>
+      <label class="check"><input type="checkbox" id="s-portainer_verify_tls"> Check Portainer's HTTPS certificate (leave off for Portainer's built-in self-signed one)</label>
+      <div class="row gap">
+        <button type="button" class="btn" id="btn-test-portainer">Test connection</button>
+        <span id="portainer-test" class="small"></span>
+      </div>
+
       <h4>Checking</h4>
       <div class="grid2">
         <label class="field"><span>Check every</span>
@@ -177,6 +193,21 @@
         <button type="submit" class="btn primary" id="btn-save-settings">Save</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Update dialog -->
+  <dialog id="dlg-update" class="dlg">
+    <div class="dlg-inner">
+      <div class="dlg-head">
+        <h3 id="update-title">Update</h3>
+        <button type="button" class="btn ghost icon-only" data-close aria-label="Close">✕</button>
+      </div>
+      <div id="update-body"></div>
+      <div class="dlg-foot">
+        <button type="button" class="btn ghost" data-close>Close</button>
+        <button type="button" class="btn primary" id="btn-update-go">Update</button>
+      </div>
+    </div>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 - 2026-11-22
+
+Portainer support.
+
+- Connect Portainer (address + access token) in Settings to watch the containers in every
+  Portainer environment, with nothing to install on those machines. An environment that's
+  the same Docker as this server isn't listed twice.
+- New **Managed by** column: **Stack · name** (Portainer, total control), **Compose · name**
+  (started outside Portainer, limited control) or **Standalone**.
+- **Update** button for what Portainer can update: redeploys a stack with a fresh pull
+  (editor and Git stacks), or recreates a standalone container with a fresh pull. Shows
+  exactly what will happen and asks first. Can be turned off in Settings.
+- If an update includes Lookout's own container, Lookout answers first and then restarts.
+- `PORTAINER_URL` and `PORTAINER_TOKEN` environment variables.
+
 ## 0.2.0 - 2026-11-22
 
 Adds a dashboard on port 18099.
