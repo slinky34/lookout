@@ -150,6 +150,17 @@ class Checker:
                 seen_pt.add(hid)
                 if only is not None and hid not in only:
                     continue
+                if ep_id in idx.errors:
+                    msg = idx.errors[ep_id]
+                    errors.append(f"{ep_name}: {msg}")
+                    with self.store.lock:
+                        prev = self.store.data["results"].get(hid) or {}
+                        self.store.data["results"][hid] = {
+                            **prev, "id": hid, "name": ep_name, "url": None, "source": "portainer",
+                            "ok": False, "error": msg, "checked_at": int(time.time()),
+                            "images": prev.get("images") or [], "ignored": prev.get("ignored") or [],
+                        }
+                    continue
                 same = next((h for h, ids in direct_ids.items() if ids and ids & ep_ids), None)
                 if same is None and only is not None:
                     # Partial check: rely on the link found by the last full check.

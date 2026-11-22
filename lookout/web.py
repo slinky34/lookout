@@ -378,6 +378,7 @@ def create_app(base_cfg: dict, store: Store, scheduler, password: str | None = N
                 parse_interval(str(body["interval"]))
             except ValueError as e:
                 return _err(str(e))
+        before = cfg()
         with store.lock:
             overrides = store.data.setdefault("settings", {})
             for field, (path, kind) in SETTINGS.items():
@@ -394,6 +395,10 @@ def create_app(base_cfg: dict, store: Store, scheduler, password: str | None = N
                     _set(overrides, path, (str(v).strip() or None) if v is not None else None)
             store.save()
         scheduler.reschedule()
+        after = cfg()
+        # What's watched depends on these, so look again now rather than at the next interval.
+        if any(before.get(k) != after.get(k) for k in ("portainer", "docker", "registries")):
+            scheduler.trigger(None)
         return get_settings()
 
     @app.post("/api/test-notify")

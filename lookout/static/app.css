@@ -249,3 +249,5 @@ textarea { resize: vertical; font-family: ui-monospace, "SF Mono", Menlo, Consol
   .tabs { width: 100%; overflow-x: auto; }
 }
 .steps.done { list-style: none; padding-left: 0; }
+#portainer-test { flex: 1 1 100%; }
+#portainer-test .steps { margin: 4px 0 0; }

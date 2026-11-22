@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 - 2026-11-22
+
+- Saving Portainer or container settings now checks straight away, so Portainer's
+  environments appear without waiting for the next scheduled check.
+- An environment Portainer can't read (down, or Portainer can't list it) now shows with
+  the reason instead of being left out.
+- **Test connection** lists each environment with its container count or its problem.
+
 ## 0.3.0 - 2026-11-22
 
 Portainer support.

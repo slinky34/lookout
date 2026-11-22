@@ -37,6 +37,9 @@ class Index:
     containers: dict[str, dict] = field(default_factory=dict)               # full container id -> {endpoint, name, labels}
     by_name: dict[str, list[dict]] = field(default_factory=dict)            # container name -> [entries]
     stacks: dict[tuple[int, str], dict] = field(default_factory=dict)       # (endpoint id, project lower) -> stack
+    errors: dict[int, str] = field(default_factory=dict)                    # endpoint id -> why it couldn't be read
+    counts: dict[int, int] = field(default_factory=dict)                    # endpoint id -> containers seen
+    skipped: dict[str, str] = field(default_factory=dict)                   # name -> why it isn't watched
 
 
 class PortainerClient:
@@ -79,16 +82,25 @@ class PortainerClient:
     def index(self) -> Index:
         idx = Index()
         for ep in self._call("GET", "/endpoints") or []:
-            # 1 = Docker, 2 = Agent, 4 = Edge agent (standard), 7 = Edge agent (async)... only Docker-ish ones.
+            # Portainer environment types: 1 Docker, 2 Docker agent, 4 Docker edge agent,
+            # 3 Azure, 5-7 Kubernetes. Only Docker ones have containers to read here.
+            name = ep.get("Name") or str(ep["Id"])
             if ep.get("Type") not in (1, 2, 4):
+                idx.skipped[name] = "Not a Docker environment (Kubernetes/Azure aren't supported)"
                 continue
-            idx.endpoints[ep["Id"]] = ep.get("Name") or str(ep["Id"])
+            idx.endpoints[ep["Id"]] = name
+            if ep.get("Status") == 2:
+                idx.errors[ep["Id"]] = "Portainer says this environment is down"
         for ep_id in list(idx.endpoints):
+            if ep_id in idx.errors:
+                continue
             try:
                 containers = self._call("GET", f"/endpoints/{ep_id}/docker/containers/json", params={"all": 1})
             except PortainerError as e:
-                log.info("Portainer environment %s: %s", idx.endpoints[ep_id], e)
+                log.warning("Portainer environment %s: %s", idx.endpoints[ep_id], e)
+                idx.errors[ep_id] = f"Portainer couldn't list this environment's containers: {e}"
                 continue
+            idx.counts[ep_id] = len(containers or [])
             for c in containers or []:
                 name = (c.get("Names") or ["/?"])[0].lstrip("/")
                 entry = {"endpoint": ep_id, "id": c["Id"], "name": name, "labels": c.get("Labels") or {}}
@@ -100,7 +112,11 @@ class PortainerClient:
 
     def summary(self) -> dict:
         idx = self.index()
-        return {"environments": len(idx.endpoints), "containers": len(idx.containers), "stacks": len(idx.stacks)}
+        envs = [{"name": n, "containers": idx.counts.get(i, 0), "error": idx.errors.get(i)}
+                for i, n in sorted(idx.endpoints.items())]
+        envs += [{"name": n, "containers": 0, "error": why} for n, why in idx.skipped.items()]
+        return {"environments": len(idx.endpoints), "containers": len(idx.containers),
+                "stacks": len(idx.stacks), "details": envs}
 
     # -- updating --------------------------------------------------------------
 

@@ -135,4 +135,24 @@ def test_updates_can_be_turned_off(tmp_path, fp, monkeypatch):
 def test_portainer_test_endpoint(tmp_path, fp, monkeypatch):
     _, _, app, _ = make(tmp_path, fp, no_socket, monkeypatch)
     r = app.post("/api/portainer/test").get_json()
-    assert r == {"ok": True, "environments": 2, "containers": 6, "stacks": 2}
+    assert (r["environments"], r["containers"], r["stacks"]) == (2, 6, 2)
+    assert {d["name"]: (d["containers"], d["error"]) for d in r["details"]} == {
+        "local": (4, None), "nas": (2, None),
+        "k8s": (0, "Not a Docker environment (Kubernetes/Azure aren't supported)")}
+
+
+def test_saving_portainer_settings_checks_right_away(tmp_path, fp, monkeypatch):
+    _, _, app, sched = make(tmp_path, fp, no_socket, monkeypatch)
+    app.put("/api/settings", json={"interval": "3h"})
+    assert sched.triggered == []                       # unrelated setting: no extra check
+    app.put("/api/settings", json={"portainer_url": fp.url + "/"})
+    assert sched.triggered == [None]                   # full check queued
+
+
+def test_unreadable_environment_shows_its_error(tmp_path, fp, monkeypatch):
+    fp.state["endpoints"][1]["Status"] = 2             # nas is down
+    store, checker, app, _ = make(tmp_path, fp, no_socket, monkeypatch)
+    checker.run()
+    hosts = {h["id"]: h for h in app.get("/api/status").get_json()["hosts"]}
+    assert hosts["pt-2"]["ok"] is False and "down" in hosts["pt-2"]["error"]
+    assert len(hosts["pt-1"]["images"]) == 4

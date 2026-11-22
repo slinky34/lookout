@@ -411,7 +411,7 @@ async function saveSettings(close = true) {
     for (const el of $$("#form-settings [data-secret]")) delete el.dataset.clear;
     fillSettings(s);
     if (close) { $("#dlg-settings").close(); toast("Settings saved"); }
-    refresh();
+    soon();
     return true;
   } catch (e) {
     msg.textContent = e.message;
@@ -491,8 +491,12 @@ async function testPortainer() {
   if (!(await saveSettings(false))) { out.textContent = ""; return; }
   try {
     const r = await api("POST", "/api/portainer/test");
-    out.className = "small msg-ok";
-    out.textContent = `Connected: ${r.environments} environment${r.environments === 1 ? "" : "s"}, ${r.stacks} stack${r.stacks === 1 ? "" : "s"}, ${r.containers} container${r.containers === 1 ? "" : "s"}.`;
+    const bad = (r.details || []).some((d) => d.error);
+    out.className = "small " + (bad ? "" : "msg-ok");
+    out.innerHTML = `<span class="msg-ok">Connected: ${r.environments} Docker environment${r.environments === 1 ? "" : "s"}, ${r.stacks} stack${r.stacks === 1 ? "" : "s"}, ${r.containers} container${r.containers === 1 ? "" : "s"}.</span>`
+      + ((r.details || []).length ? `<ul class="steps">${r.details.map((d) => d.error
+        ? `<li class="msg-bad">${esc(d.name)}: ${esc(d.error)}</li>`
+        : `<li>${esc(d.name)}: ${d.containers} container${d.containers === 1 ? "" : "s"}</li>`).join("")}</ul>` : "");
   } catch (e) {
     out.className = "small msg-bad";
     out.textContent = e.message;
