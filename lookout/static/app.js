@@ -135,6 +135,44 @@ function collectUpdates(s) {
   return out;
 }
 
+// Everything counted in the Problems tile, with where it is and what to do.
+function fixFor(msg) {
+  const m = (msg || "").toLowerCase();
+  if (m.includes("socket not found")) return `Add <code>/var/run/docker.sock:/var/run/docker.sock:ro</code> to Lookout's volumes, or ignore this if Portainer covers this server.`;
+  if (m.includes("connection refused") || m.includes("no answer") || m.includes("can't reach docker")) return "Check the machine is on and the socket proxy container is running.";
+  if (m.includes("needs a login") || m.includes("private images need credentials")) return "This image is private. Add a registry login in config.yaml, or remove it from the watch list.";
+  if (m.includes("not found on")) return "The registry doesn't have this image or tag. It may have been renamed or removed.";
+  if (m.includes("rate limit")) return `Add a token in <a href="#" data-open-settings>Settings</a>, or check less often.`;
+  if (m.includes("rejected the access token") || m.includes("portainer")) return `Check the Portainer address and token in <a href="#" data-open-settings>Settings</a>.`;
+  if (m.includes("doesn't exist or is private")) return "Check the spelling, or add a GitHub token for private repos.";
+  return "";
+}
+function collectProblems(s) {
+  const out = [];
+  if (s.portainer && s.portainer.error) {
+    out.push({ kind: "Portainer", where: "Portainer connection", msg: s.portainer.error, fix: fixFor("portainer") });
+  }
+  for (const h of s.hosts) {
+    const check = `<button class="btn tiny" data-check="${esc(h.id)}">Check again</button>`;
+    if (h.ok === false) {
+      out.push({ kind: "Host", where: h.name, sub: h.source === "portainer" ? "Portainer environment" : (h.url || "local Docker"),
+        msg: h.error, fix: fixFor(h.error), actions: check });
+    }
+    for (const i of h.images) if (i.status === "error") {
+      out.push({ kind: "Container", where: i.ref, sub: `${i.containers.join(", ")} on ${h.name}`, msg: i.reason, fix: fixFor(i.reason), actions: check });
+    }
+  }
+  for (const i of s.images) if (i.status === "error") {
+    out.push({ kind: "Image", where: i.label || i.ref, sub: i.label ? i.ref : "", msg: i.error, fix: fixFor(i.error),
+      actions: `<button class="btn tiny" data-check="${esc(i.id)}">Check again</button><button class="btn tiny danger" data-remove="images:${esc(i.id)}" data-name="${esc(i.label || i.ref)}">Remove</button>` });
+  }
+  for (const r of s.repos) if (r.status === "error") {
+    out.push({ kind: "GitHub", where: r.label || r.repo, sub: r.label ? r.repo : "", msg: r.error, fix: fixFor(r.error),
+      actions: `<button class="btn tiny" data-check="${esc(r.id)}">Check again</button><button class="btn tiny danger" data-remove="repos:${esc(r.id)}" data-name="${esc(r.label || r.repo)}">Remove</button>` });
+  }
+  return out;
+}
+
 // ---------- render ----------
 function render() {
   const s = ui.status;
@@ -157,10 +195,21 @@ function render() {
   // tiles
   const c = s.counts;
   $("#tiles").innerHTML = `
-    <div class="tile ${c.updates ? "hot" : ""}"><div class="label">Updates available</div><div class="value">${c.updates}</div></div>
+    <button type="button" class="tile ${c.updates ? "hot" : ""}" ${c.updates ? `data-jump="updates-section"` : "disabled"}><div class="label">Updates available</div><div class="value">${c.updates}</div>${c.updates ? `<div class="tile-link">Show ↓</div>` : ""}</button>
     <div class="tile"><div class="label">Watching</div><div class="value">${c.watching}</div></div>
-    <div class="tile ${c.errors ? "bad" : ""}"><div class="label">Problems</div><div class="value">${c.errors}</div></div>
+    <button type="button" class="tile ${c.errors ? "bad" : ""}" ${c.errors ? `data-jump="problems-section"` : "disabled"}><div class="label">Problems</div><div class="value">${c.errors}</div>${c.errors ? `<div class="tile-link">Show what's wrong ↓</div>` : ""}</button>
     <div class="tile"><div class="label">Notifications</div><div class="value sm">${s.notifiers.length ? esc(s.notifiers.join(" · ")) : `<span class="muted">Not set up</span>`}</div></div>`;
+
+  // problems
+  const probs = collectProblems(s);
+  $("#problems-section").hidden = !probs.length;
+  $("#problems").innerHTML = probs.map((p) => `
+    <li class="problem">
+      <span class="pill error">${esc(p.kind)}</span>
+      <div class="main"><div class="title">${esc(p.where)}</div>${p.sub ? `<div class="sub">${esc(p.sub)}</div>` : ""}</div>
+      <div class="info">${esc(p.msg)}${p.fix ? `<div class="sub">${p.fix}</div>` : ""}</div>
+      <div class="acts">${p.actions || ""}</div>
+    </li>`).join("");
 
   // updates
   const ups = collectUpdates(s);
@@ -509,6 +558,11 @@ document.addEventListener("click", async (ev) => {
   if (!t) return;
   if (t.matches("[data-open-settings]")) { ev.preventDefault(); return openSettings(); }
   if (t.dataset.update) return openUpdate(t.dataset.update, t.dataset.ref);
+  if (t.dataset.jump) {
+    const el = document.getElementById(t.dataset.jump);
+    if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1200); }
+    return;
+  }
   if (t.dataset.add) { ev.preventDefault(); return openAdd(t.dataset.add); }
   if (t.dataset.check) return checkNow([t.dataset.check]);
   if (t.dataset.ack) {

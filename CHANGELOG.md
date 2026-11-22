@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2 - 2026-11-22
+
+- New **Problems** list near the top: each problem says where it is, what went wrong and
+  what to do, with **Check again** (and **Remove** for watched images and repos).
+- The **Problems** and **Updates available** tiles jump to their lists.
+- A Portainer connection error now counts as a problem.
+- "Updates only" filter renamed to "Updates & problems only", which is what it shows.
+
 ## 0.3.1 - 2026-11-22
 
 - Saving Portainer or container settings now checks straight away, so Portainer's

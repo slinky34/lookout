@@ -251,3 +251,17 @@ textarea { resize: vertical; font-family: ui-monospace, "SF Mono", Menlo, Consol
 .steps.done { list-style: none; padding-left: 0; }
 #portainer-test { flex: 1 1 100%; }
 #portainer-test .steps { margin: 4px 0 0; }
+button.tile { text-align: left; font: inherit; color: inherit; cursor: pointer; transition: border-color .15s, transform .15s; }
+button.tile:hover:not([disabled]) { border-color: var(--muted); }
+button.tile[disabled] { cursor: default; }
+.tile-link { font-size: 12px; font-weight: 600; margin-top: 2px; color: var(--muted); }
+.tile.bad .tile-link { color: var(--bad); }
+.tile.hot .tile-link { color: var(--accent); }
+.rows.problems li { grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1.6fr) auto; align-items: start; }
+.rows.problems .info .sub { margin-top: 3px; }
+.rows.problems .info .sub code { font-size: 11.5px; }
+.block.flash .panel, .block.flash .card { box-shadow: 0 0 0 2px var(--accent); transition: box-shadow .3s; }
+@media (max-width: 860px) {
+  .rows.problems li { grid-template-columns: 1fr auto; }
+}
+.block { scroll-margin-top: 76px; }
