@@ -35,9 +35,11 @@ def plan(client: PortainerClient, row: dict) -> dict:
     containers: list[dict] = []
     skipped: list[dict] = []
     stack_by_id = {s["Id"]: s for s in idx.stacks.values()}
+    stale = False
     for m in row.get("members") or []:
-        mgr = classify(m, idx)
+        mgr = classify(m, idx, (m.get("manager") or {}).get("endpoint"))
         if not mgr["can_update"]:
+            stale = stale or bool(mgr.get("stale"))
             skipped.append({"name": m["name"], "why": mgr.get("why") or "Can't be updated from here"})
             continue
         if mgr["type"] == "stack":
@@ -56,7 +58,7 @@ def plan(client: PortainerClient, row: dict) -> dict:
             })
     steps = list(stacks.values()) + containers
     steps.sort(key=lambda s: s["self"])   # Lookout itself goes last
-    return {"steps": steps, "skipped": skipped}
+    return {"steps": steps, "skipped": skipped, "stale": stale}
 
 
 def describe(p: dict) -> dict:
@@ -71,7 +73,7 @@ def describe(p: dict) -> dict:
         if s["endpoint_name"]:
             text += f" on {s['endpoint_name']}"
         out.append({"text": text, "self": s["self"]})
-    return {"steps": out, "skipped": deepcopy(p["skipped"])}
+    return {"steps": out, "skipped": deepcopy(p["skipped"]), "stale": bool(p.get("stale"))}
 
 
 def run(client: PortainerClient, p: dict) -> list[dict]:

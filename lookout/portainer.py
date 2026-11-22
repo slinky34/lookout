@@ -196,7 +196,7 @@ class PortainerDocker:
         return _Obj(attrs=img) if not quiet else img
 
 
-def classify(member: dict, idx: Index | None) -> dict:
+def classify(member: dict, idx: Index | None, endpoint_hint: int | None = None) -> dict:
     """How a container is managed, and whether Lookout can update it through Portainer.
 
     member: {"id", "name", "project"} from Lookout's own scan.
@@ -212,10 +212,21 @@ def classify(member: dict, idx: Index | None) -> dict:
 
     entry = idx.containers.get(member.get("id") or "")
     if entry is None:
+        # Recreated containers get a new ID; find them by name, in the environment
+        # they were last seen in when there's more than one with that name.
         candidates = idx.by_name.get(member.get("name") or "", [])
+        if endpoint_hint is not None and len(candidates) > 1:
+            candidates = [c for c in candidates if c["endpoint"] == endpoint_hint]
         entry = candidates[0] if len(candidates) == 1 else None
     if entry is None:
-        out["why"] = "Portainer doesn't manage this container's environment"
+        if endpoint_hint is not None and endpoint_hint in idx.errors:
+            out["why"] = f"Portainer can't reach {idx.endpoints.get(endpoint_hint, 'its environment')} right now: {idx.errors[endpoint_hint]}"
+            out["stale"] = True
+        elif endpoint_hint is not None:
+            out["why"] = "This container has changed since the last check (it may have been recreated or removed). Lookout is checking again; try once that's done."
+            out["stale"] = True
+        else:
+            out["why"] = "Portainer doesn't manage this container's environment"
         return out
 
     ep = entry["endpoint"]

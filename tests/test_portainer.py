@@ -172,3 +172,19 @@ def test_portainer_and_agent_are_never_recreated_through_portainer(tmp_path, fp,
     row = next(r for r in store.data["results"]["pt-2"]["images"] if r["ref"] == "portainer/agent:latest")
     assert row["can_update"] is False
     assert "can't update itself" in row["members"][0]["manager"]["why"]
+
+
+def test_recreated_container_is_found_by_name_in_its_environment(tmp_path, fp, monkeypatch):
+    store, checker, app, sched = make(tmp_path, fp, no_socket, monkeypatch)
+    checker.run()
+    nginx = next(c for c in fp.state["containers"] if c["Id"] == "d" * 64)
+    nginx["Id"] = "9" * 64                       # recreated since the check: new ID
+    twin = dict(nginx, Id="8" * 64, _ep=2)       # and a same-named container elsewhere
+    fp.state["containers"].append(twin)
+    app.post("/api/hosts/pt-1/update", json={"ref": "nginx:1.25.3", "confirm": True})
+    assert fp.state["calls"][-1][:2] == ("POST", f"/api/docker/1/containers/{'9' * 64}/recreate")
+
+    fp.state["containers"] = [c for c in fp.state["containers"] if c["Names"] != ["/nginx"]]
+    plan = app.post("/api/hosts/pt-1/update", json={"ref": "nginx:1.25.3"}).get_json()["plan"]
+    assert plan["steps"] == [] and plan["stale"] is True
+    assert "changed since the last check" in plan["skipped"][0]["why"]

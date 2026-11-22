@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.2 - 2026-11-22
+
+- **Shorter update lists.** Rows in Other updates and on each environment page take less
+  room: names stay on one line, and **What's new** expands the latest release notes
+  right in the list without opening the details panel.
+- **Fixed: Update said "Portainer doesn't manage this container's environment"** for a
+  container that had been recreated since the last check (it gets a new ID). Lookout now
+  finds it by name in the environment it was last seen in. If it's really gone, the
+  dialog says so and that environment is checked again.
+
 ## 0.4.1 - 2026-11-22
 
 - **Smaller "Needs attention" cards.** Each card is now three short lines: name and flags,

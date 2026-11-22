@@ -179,13 +179,32 @@ const importance = (it) => Math.min(...(it.flags.length ? it.flags.map((f) => RA
 const matches = (it) => !ui.search || it.text.includes(ui.search.toLowerCase());
 
 function itemRow(it, { showMg = true } = {}) {
-  return `<li class="item" tabindex="0" data-open="${esc(it.key)}">
+  const rel = (it.changes && it.changes.releases) || [];
+  const open = rel.length && ui.expanded.has(it.key);
+  const toggle = rel.length
+    ? ` · <button type="button" class="linkish" data-expand="${esc(it.key)}" aria-expanded="${!!open}">${open ? "▾ Hide notes" : `▸ What's new${rel.length > 1 ? ` (${rel.length})` : ""}`}</button>` : "";
+  return `<li class="item${open ? " open" : ""}" tabindex="0" data-open="${esc(it.key)}">
     <span class="state ${esc(it.status)}" title="${esc(it.status)}"></span>
-    <div class="main"><div class="title">${esc(it.name)}</div><div class="sub">${esc(it.sub)}</div></div>
+    <div class="main"><div class="title" title="${esc(it.name)}">${esc(it.name)}</div><div class="sub"><span class="where" title="${esc(it.sub)}">${esc(it.sub)}</span>${toggle}</div></div>
     <div class="what"><span>${it.status === "update" ? versionText(it) : it.what}</span>${flagChips(it.flags)}</div>
     ${showMg ? `<div class="mg">${it.mg}</div>` : ""}
     <div class="act">${it.action || ""}</div>
+    ${open ? `<div class="more">${rel.slice(0, 3).map(relPeek).join("")}
+      ${rel.length > 3 || rel.some((r) => noteLines(r.notes).length > 4) ? `<div class="muted small">Full notes in details →</div>` : ""}</div>` : ""}
   </li>`;
+}
+
+// The first few readable lines of a release's notes.
+function noteLines(notes) {
+  return String(notes || "").replace(/\r/g, "").split("\n")
+    .map((l) => l.replace(/^\s*(#{1,6}|[-*+]|\d+\.)\s+/, "").replace(/\*\*|__|`/g, "").trim())
+    .filter((l) => l && !/^(what's changed|full changelog|changes?|changelog)\b:?$/i.test(l) && !/^-{3,}$/.test(l));
+}
+function relPeek(r) {
+  const lines = noteLines(r.notes).slice(0, 4);
+  return `<div class="peek"><div class="peek-head"><strong>${esc(r.name || r.tag || "Release")}</strong>
+      ${r.published_at ? `<span class="muted small">${esc(dateOf(r.published_at))}</span>` : ""}${flagChips(r.flags || [])}</div>
+    ${lines.length ? `<ul class="why">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : `<div class="muted small">No notes.</div>`}</div>`;
 }
 
 // ---------- problems ----------
@@ -678,6 +697,8 @@ async function openUpdate(host, ref) {
       + (p.skipped.length ? `<p class="small"><strong>Not included:</strong></p><ul class="steps small">${p.skipped.map((s) => `<li>${esc(s.name)}: ${esc(s.why)}</li>`).join("")}</ul>` : "");
     btn.disabled = !p.steps.length;
     btn.hidden = !p.steps.length;
+    // The row was out of date: re-check that environment so the list catches up.
+    if (p.stale && !p.steps.length) checkNow([host]);
   } catch (e) {
     body.innerHTML = `<p class="msg-bad">${esc(e.message)}</p>`;
     btn.hidden = true;

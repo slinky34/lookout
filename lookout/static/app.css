@@ -202,8 +202,15 @@ button.stat:hover { border-color: var(--muted); }
 }
 .item:last-child { border-bottom: 0; }
 .item:hover { background: var(--hover); }
-.item .title { font-weight: 600; overflow-wrap: anywhere; }
-.item .sub { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.item .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .sub { color: var(--muted); font-size: 12.5px; display: flex; gap: 4px; white-space: nowrap; min-width: 0; }
+.item .sub .where { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.item .sub .linkish { flex: none; }
+.item > .more { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; margin-left: 30px; background: var(--bg); border-radius: 6px; cursor: default; }
+.peek-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.peek .why { margin: 3px 0 0; padding: 0; list-style: none; font-size: 12.5px; display: flex; flex-direction: column; gap: 2px; }
+.peek .why li { display: flex; gap: 6px; overflow-wrap: anywhere; }
+.peek .why li::before { content: "›"; color: var(--muted); }
 .item .what { font-size: 13.5px; min-width: 0; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .item .mg { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .item .act { display: flex; justify-content: flex-end; }
