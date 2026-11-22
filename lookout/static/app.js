@@ -12,6 +12,7 @@ const ui = {
   status: null,
   fastUntil: 0,
   addKind: "repos",
+  expanded: new Set(),
 };
 
 function localGet(k) { try { return localStorage.getItem("lookout." + k); } catch { return null; } }
@@ -310,8 +311,10 @@ function pageOverview(s, items) {
         <p class="muted">Lookout checks every ${esc(s.interval)}${s.notifiers.length ? " and will let you know" : ""}.</p></div>`);
   }
   if (important.length) {
+    const allOpen = important.every((i) => ui.expanded.has(i.key));
     html += `<section class="section" id="important"><div class="section-head"><h2>Needs attention</h2>
-      <p class="muted small">Security fixes, breaking changes and major versions, found in the release notes</p></div>
+      <p class="muted small">Security fixes, breaking changes and major versions, found in the release notes ·
+      <button type="button" class="linkish" data-expand-all="${allOpen ? "0" : "1"}">${allOpen ? "Collapse all" : "Expand all"}</button></p></div>
       <div class="important">${important.map(importantCard).join("")}</div></section>`;
   }
   if (others.length) {
@@ -326,11 +329,14 @@ function importantCard(it) {
   const why = it.changes && it.changes.why
     ? Object.entries(it.changes.why).filter(([k]) => k !== "major").flatMap(([, v]) => v).slice(0, 3) : [];
   const n = it.changes && it.changes.releases ? it.changes.releases.length : 0;
-  return `<div class="icard ${it.flags[0] || "major"}" tabindex="0" data-open="${esc(it.key)}">
-    <div class="top"><div><div class="name">${esc(it.name)}</div><div class="where">${esc(it.sub)}</div></div>${flagChips(it.flags)}</div>
-    <div>${versionText(it)}</div>
-    ${why.length ? `<ul class="why">${why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
-    <div class="foot"><span class="muted small">${n ? `${plural(n, "release")} · details →` : "Details →"}</span>${it.action || ""}</div>
+  const open = ui.expanded.has(it.key);
+  return `<div class="icard ${it.flags[0] || "major"}${open ? " open" : ""}" tabindex="0" data-open="${esc(it.key)}">
+    <div class="top"><div class="name" title="${esc(it.name)}">${esc(it.name)}</div>${flagChips(it.flags)}</div>
+    <div class="meta"><span class="where">${esc(it.sub)}</span><span class="ver">${versionText(it)}</span></div>
+    ${why.length && open ? `<ul class="why">${why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+    <div class="foot">
+      <span class="small">${why.length ? `<button type="button" class="linkish" data-expand="${esc(it.key)}" aria-expanded="${open}">${open ? "▾ Hide reason" : `▸ Why flagged${why.length > 1 ? ` (${why.length})` : ""}`}</button> · ` : ""}<span class="muted">${n ? `${plural(n, "release")} · details →` : "Details →"}</span></span>
+      ${it.action || ""}</div>
   </div>`;
 }
 
@@ -707,6 +713,15 @@ document.addEventListener("click", async (ev) => {
   if (t.dataset.update) return openUpdate(t.dataset.update, t.dataset.ref);
   if (t.dataset.check) return checkNow([t.dataset.check]);
   if (t.dataset.filter) { ui.envFilter = t.dataset.filter; localSet("envFilter", ui.envFilter); return render(); }
+  if (t.dataset.expand) {
+    ev.stopPropagation();
+    ui.expanded.has(t.dataset.expand) ? ui.expanded.delete(t.dataset.expand) : ui.expanded.add(t.dataset.expand);
+    return render();
+  }
+  if (t.dataset.expandAll) {
+    document.querySelectorAll("[data-expand]").forEach((b) => (t.dataset.expandAll === "1" ? ui.expanded.add(b.dataset.expand) : ui.expanded.delete(b.dataset.expand)));
+    return render();
+  }
   if (t.dataset.jump) { document.getElementById(t.dataset.jump)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
   if (t.dataset.ack) {
     const [kind, id] = t.dataset.ack.split(":");

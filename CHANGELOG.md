@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 - 2026-11-22
+
+- **Smaller "Needs attention" cards.** Each card is now three short lines: name and flags,
+  where it runs and the version change, then the actions. The reason it was flagged is
+  hidden behind **Why flagged**; click it to expand, or use **Expand all**.
+
 ## 0.4.0 - 2026-11-22
 
 New dashboard layout, and release notes for every update.

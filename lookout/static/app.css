@@ -167,22 +167,28 @@ button.stat:hover { border-color: var(--muted); }
 .section-head h2 { font-size: 15.5px; }
 .section-head p { margin: 0; }
 
-.important { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.important { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; align-items: start; }
 .icard {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
-  padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; min-width: 0;
+  padding: 10px 14px; display: flex; flex-direction: column; gap: 5px; cursor: pointer; min-width: 0;
   border-left: 4px solid var(--major);
 }
 .icard:hover { background: var(--hover); }
 .icard.security { border-left-color: var(--bad); }
 .icard.breaking { border-left-color: var(--warn); }
-.icard .top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
-.icard .name { font-weight: 650; font-size: 15px; overflow-wrap: anywhere; }
-.icard .where { color: var(--muted); font-size: 12.5px; }
-.icard .why { margin: 0; padding: 0; list-style: none; font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
-.icard .why li { display: flex; gap: 6px; }
+.icard .top { display: flex; justify-content: space-between; gap: 10px; align-items: center; min-width: 0; }
+.icard .name { font-weight: 650; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.icard .top .flags { flex: none; }
+.icard .meta { display: flex; gap: 10px; align-items: center; justify-content: space-between; font-size: 12.5px; min-width: 0; }
+.icard .where { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.icard .ver { flex: none; white-space: nowrap; }
+.icard .ver code { font-size: 12px; }
+.icard .why { margin: 2px 0; padding: 8px 10px; list-style: none; font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; background: var(--bg); border-radius: 6px; }
+.icard .why li { display: flex; gap: 6px; overflow-wrap: anywhere; }
 .icard .why li::before { content: "›"; color: var(--muted); }
-.icard .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
+.icard .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.linkish:hover { text-decoration: underline; }
 
 /* ---------- lists ---------- */
 .list { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
