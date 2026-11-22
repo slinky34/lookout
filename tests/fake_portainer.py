@@ -101,6 +101,8 @@ def create_app(state: dict) -> Flask:
     @app.put("/api/stacks/<int:sid>")
     def update_stack(sid):
         record()
+        if sid in state.get("busy", ()):
+            return jsonify({"message": "Stack deployment is already in progress"}), 409
         body = request.get_json()
         if not body.get("StackFileContent"):
             return jsonify({"message": "Invalid request payload", "details": "Invalid stack file content"}), 400

@@ -137,3 +137,9 @@ def test_migrates_and_seeds(tmp_path):
     store.seed_repos(["a/b", "c/d"])     # deleting a seeded repo sticks
     assert [r["repo"] for r in store.data["repos"]] == ["a/b"]
     assert store.data["notified"]["docker:nginx:latest:digest"] == "sha256:x"
+
+
+def test_page_has_versioned_assets(env):
+    from lookout import __version__
+    html = env.app.get("/").get_data(as_text=True)
+    assert f"app.js?v={__version__}" in html and "__V__" not in html

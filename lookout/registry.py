@@ -54,6 +54,30 @@ class RegistryClient:
             raise RegistryError(f"{ref.registry} returned no digest for {ref}")
         return digest
 
+    def image_config(self, ref: ImageRef, reference: str | None = None) -> dict:
+        """The image config (created date, labels) for a tag or digest. For multi-arch
+        images, the linux/amd64 variant (labels are the same across architectures).
+        Note: on Docker Hub a manifest GET counts toward the pull limit, so callers cache."""
+        reference = reference or ref.tag
+        base = f"https://{ref.registry}/v2/{ref.repository}"
+        man = self._request("GET", ref, f"{base}/manifests/{reference}",
+                            headers={"Accept": MANIFEST_ACCEPT}).json()
+        if "manifests" in man:   # index / manifest list
+            entries = [m for m in man["manifests"]
+                       if (m.get("platform") or {}).get("os") not in (None, "unknown")]
+            pick = next((m for m in entries if (m.get("platform") or {}).get("architecture") == "amd64"),
+                        entries[0] if entries else None)
+            if pick is None:
+                raise RegistryError(f"{ref} has no usable image in its manifest list")
+            man = self._request("GET", ref, f"{base}/manifests/{pick['digest']}",
+                                headers={"Accept": MANIFEST_ACCEPT}).json()
+        digest = (man.get("config") or {}).get("digest")
+        if not digest:
+            raise RegistryError(f"{ref} has no image config")
+        blob = self._request("GET", ref, f"{base}/blobs/{digest}").json()
+        cfg = blob.get("config") or {}
+        return {"created": blob.get("created"), "labels": cfg.get("Labels") or {}}
+
     def list_tags(self, ref: ImageRef, max_pages: int = 20) -> list[str]:
         tags: list[str] = []
         url: str | None = f"https://{ref.registry}/v2/{ref.repository}/tags/list?n=1000"

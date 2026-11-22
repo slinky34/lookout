@@ -30,6 +30,25 @@ For images and GitHub repos, click **I've updated it** in the dashboard.
 Lookout only changes anything when you click **Update** and confirm, and only through
 Portainer. Without Portainer it just watches and tells you.
 
+## What's in an update
+
+For each pending update Lookout looks up the release notes between the version you run and
+the new one, using the image's own labels (`org.opencontainers.image.source` and
+`.version`) and the project's GitHub releases. Most images have them, including all
+linuxserver.io images. Lookout then flags:
+
+- **Security**: the notes mention security fixes, CVEs, vulnerabilities, auth bypasses…
+- **Breaking**: breaking changes, required migrations or manual steps
+- **Major**: the major version goes up (e.g. 2.x → 3.x)
+
+Flagged updates are listed first under **Needs attention**, with the line from the notes
+that triggered each flag. They're also first in notifications, and security fixes go out
+at high priority on ntfy and Gotify. Click any update to read its release notes.
+
+Flags come from the wording of the notes, so treat them as a pointer, not a guarantee.
+Add a GitHub token in Settings: lookups use GitHub's API, which allows 60 requests an hour
+without one. Each update is looked up once and remembered.
+
 ## Portainer: watch every environment and update with one click
 
 1. In Portainer: **My account → Access tokens → Add access token**. Copy it.
@@ -54,6 +73,16 @@ Notes:
 - Git stacks are redeployed from their repository with a fresh pull.
 - If the Portainer token's user can't manage a stack, the update says so.
 - Turn the Update buttons off in Settings to keep Lookout read-only.
+- Portainer and its agent are never updated through Portainer: the request would stop the
+  process doing it. Update them on the machine itself.
+- If Portainer is already deploying a stack, Lookout reports that instead of an error.
+
+### Moving a compose project into Portainer
+
+Open the container's details in Lookout. For a **Limited** project it shows where the
+compose file lives and walks through the move. In short: copy the compose file, make
+relative paths absolute, `docker compose down` (no `-v`), then create a Portainer stack
+with **exactly the same name** so the existing named volumes are reused.
 
 ## Install
 

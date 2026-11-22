@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 - 2026-11-22
+
+New dashboard layout, and release notes for every update.
+
+- **Release notes and importance.** Each pending update shows the release notes between the
+  version you run and the new one, found through the image's source labels and GitHub.
+  Updates with **security fixes**, **breaking changes** or a **major version** jump are
+  flagged, listed first under "Needs attention" with the line that triggered the flag,
+  and sent first (and at high priority for security) in notifications.
+- **Redesigned dashboard.** A sidebar with Overview, Problems, each environment with its
+  update count, and the watch lists. Click any update for a details panel with versions,
+  flags, release notes, how it's managed and the Update button. Filters per environment,
+  search (press `/`), and a phone layout with a menu.
+- **Managed by** stays visible on medium screens, and the compose file's location is shown
+  for compose projects, with steps to move a Limited project into Portainer.
+- When a newer version tag exists, the button says **Re-pull :tag** so it's clear it doesn't
+  change the tag.
+- Portainer and its agent no longer get an Update button (Portainer can't update itself).
+- "Stack deployment is already in progress" from Portainer is reported as already updating,
+  not as a failure.
+- The page loads version-stamped scripts, so a browser never mixes old and new files after
+  an upgrade.
+
 ## 0.3.2 - 2026-11-22
 
 - New **Problems** list near the top: each problem says where it is, what went wrong and

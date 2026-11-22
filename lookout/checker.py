@@ -7,7 +7,7 @@ import logging
 import time
 from copy import deepcopy
 
-from . import config, imageref, notify, versions
+from . import changes, config, imageref, notify, versions
 from .docker_watch import DockerWatcher, image_url, key_prefix
 from .github_watch import GitHubClient
 from .models import Update
@@ -226,9 +226,107 @@ class Checker:
                 pending.append(up)
             self._write_back("repos", item)
 
+        try:
+            self._attach_changes(registry, github, scanned, pending, only)
+        except Exception:
+            log.exception("looking up release notes failed")
         return self._announce(cfg, pending, errors, clean_prefixes, dry_run, full=only is None)
 
     # ------------------------------------------------------------------
+
+    MAX_LOOKUPS = 25          # new release-note lookups per check (rate limits)
+    RETRY_FAILED = 6 * 3600   # look again this long after a failed lookup
+
+    def _attach_changes(self, registry, github, scanned, pending, only):
+        """Release notes + importance flags for each pending update, cached by
+        (what you run, what's available) so each is looked up once."""
+        jobs = []   # (cache key, compute fn, where to attach, update keys)
+        for result in scanned:
+            prefix = key_prefix(result["id"])
+            for row in result["images"]:
+                if row.get("status") != "update" or not row.get("local_digest"):
+                    continue
+                ref = imageref.parse(row["ref"])
+                new_ref = str(imageref.ImageRef(ref.registry, ref.repository, row["newest_tag"], None)) \
+                    if row.get("newest_tag") else None
+                key = f"img|{ref}|{row['local_digest']}|{new_ref or row.get('remote_digest')}"
+                jobs.append((key, lambda r=row, n=new_ref: changes.for_image(registry, github, r["ref"], r["local_digest"], n),
+                             ("results", result["id"], row["ref"]),
+                             [f"{prefix}{ref}:digest", f"{prefix}{ref}:tag"]))
+        with self.store.lock:
+            images = deepcopy(self.store.data["images"])
+            repos = deepcopy(self.store.data["repos"])
+        for i in images:
+            if (only is not None and i["id"] not in only) or i.get("error") or not i.get("latest_digest"):
+                continue
+            if i.get("installed_digest") == i.get("latest_digest") and not i.get("newest_tag"):
+                continue
+            ref = imageref.parse(i["ref"])
+            new_ref = str(imageref.ImageRef(ref.registry, ref.repository, i["newest_tag"], None)) if i.get("newest_tag") else None
+            key = f"img|{ref}|{i['installed_digest']}|{new_ref or i['latest_digest']}"
+            jobs.append((key, lambda it=i, n=new_ref: changes.for_image(registry, github, it["ref"], it["installed_digest"], n),
+                         ("images", i["id"]), [f"image:{i['id']}:digest", f"image:{i['id']}:tag"]))
+        for r in repos:
+            if (only is not None and r["id"] not in only) or r.get("error"):
+                continue
+            if not r.get("latest") or r.get("installed") == r.get("latest"):
+                continue
+            key = f"gh|{r['repo']}|{r['installed']}|{r['latest']}"
+            jobs.append((key, lambda it=r: changes.for_repo(github, it["repo"], it["installed"], it["latest"],
+                                                            bool(it.get("include_prereleases"))),
+                         ("repos", r["id"]), [f"github:{r['repo']}"]))
+
+        by_update_key = {}
+        lookups = 0
+        now = int(time.time())
+        with self.store.lock:
+            cache = self.store.data.setdefault("changes", {})
+        for key, compute, where, ukeys in jobs:
+            with self.store.lock:
+                info = cache.get(key)
+            stale_failure = info and info.get("error") and now - info.get("at", 0) > self.RETRY_FAILED
+            if (info is None or stale_failure) and lookups < self.MAX_LOOKUPS:
+                lookups += 1
+                try:
+                    info = compute() or {}
+                except Exception as e:
+                    log.info("release notes for %s: %s", key, e)
+                    info = {"error": str(e), "flags": [], "releases": []}
+                info["at"] = now
+                with self.store.lock:
+                    cache[key] = info
+            if info is None:
+                continue
+            self._attach(where, info)
+            for k in ukeys:
+                by_update_key[k] = info
+
+        for u in pending:
+            info = by_update_key.get(u.key)
+            if info:
+                u.flags = list(info.get("flags") or [])
+                if not u.notes and info.get("releases"):
+                    u.notes = info["releases"][0].get("notes")
+                if info.get("releases") and u.kind != "release":
+                    u.url = info["releases"][0].get("url") or u.url
+
+        if only is None:   # forget lookups nothing points at any more
+            live = {k for k, *_ in jobs}
+            with self.store.lock:
+                for k in [k for k in cache if k not in live]:
+                    del cache[k]
+
+    def _attach(self, where, info):
+        with self.store.lock:
+            if where[0] == "results":
+                result = self.store.data["results"].get(where[1]) or {}
+                for row in result.get("images") or []:
+                    if row["ref"] == where[2]:
+                        row["changes"] = info
+            else:
+                item = self.store.find(where[0], where[1])
+                if item is not None:
+                    item["changes"] = info
 
     def _write_back(self, kind: str, item: dict):
         with self.store.lock:

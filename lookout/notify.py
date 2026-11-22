@@ -20,6 +20,19 @@ def _containers_line(u: Update) -> str | None:
     return ("Container: " if len(u.containers) == 1 else "Containers: ") + ", ".join(u.containers)
 
 
+FLAG_TEXT = {"security": "🔒 Security fix", "breaking": "⚠️ Breaking changes", "major": "⬆️ Major version"}
+FLAG_COLOR = {"security": 0xDC2626, "breaking": 0xEA580C, "major": 0x7C3AED}
+
+
+def _ordered(updates: list[Update]) -> list[Update]:
+    rank = {"security": 0, "breaking": 1, "major": 2}
+    return sorted(updates, key=lambda u: min((rank[f] for f in u.flags), default=3))
+
+
+def _flag_line(u: Update) -> str:
+    return " · ".join(FLAG_TEXT[f] for f in u.flags if f in FLAG_TEXT)
+
+
 def _plain_lines(updates: list[Update]) -> list[str]:
     lines = []
     for u in updates:
@@ -38,6 +51,8 @@ def _markdown_lines(updates: list[Update]) -> list[str]:
     for u in updates:
         title = f"[{u.title}]({u.url})" if u.url else u.title
         line = f"- **{title}**: {u.summary}"
+        if u.flags:
+            line += f" ({_flag_line(u)})"
         c = _containers_line(u)
         if c:
             line += f" ({c.split(': ', 1)[1]})"
@@ -47,7 +62,12 @@ def _markdown_lines(updates: list[Update]) -> list[str]:
 
 def _headline(updates: list[Update]) -> str:
     n = len(updates)
-    return "1 update available" if n == 1 else f"{n} updates available"
+    text = "1 update available" if n == 1 else f"{n} updates available"
+    sec = sum(1 for u in updates if "security" in u.flags)
+    brk = sum(1 for u in updates if "breaking" in u.flags)
+    extra = [f"{sec} security" if sec else "", f"{brk} breaking" if brk else ""]
+    extra = [e for e in extra if e]
+    return text + (f" ({', '.join(extra)})" if extra else "")
 
 
 class Discord:
@@ -57,6 +77,7 @@ class Discord:
         self.cfg = cfg
 
     def send(self, updates: list[Update], errors: list[str]):
+        updates = _ordered(updates)
         embeds = []
         for u in updates:
             desc = [u.summary]
@@ -69,8 +90,8 @@ class Discord:
             embed = {
                 "title": f"{u.title}"[:256],
                 "description": "\n".join(desc)[:4000],
-                "color": COLORS[u.kind],
-                "author": {"name": LABELS[u.kind]},
+                "color": next((FLAG_COLOR[f] for f in u.flags if f in FLAG_COLOR), COLORS[u.kind]),
+                "author": {"name": _flag_line(u) or LABELS[u.kind]},
             }
             if u.url:
                 embed["url"] = u.url
@@ -99,13 +120,15 @@ class Ntfy:
         self.cfg = cfg
 
     def send(self, updates: list[Update], errors: list[str]):
+        updates = _ordered(updates)
         body = "\n".join(_markdown_lines(updates))
         if errors:
             body += ("\n\n" if body else "") + "**Some checks failed:**\n" + "\n".join(f"- {e}" for e in errors)
         headers = {
             "Title": _headline(updates) if updates else "Lookout: checks failed",
             "Markdown": "yes",
-            "Priority": str(self.cfg.get("priority") or "default"),
+            "Priority": "high" if any("security" in u.flags for u in updates)
+                        else str(self.cfg.get("priority") or "default"),
             "Tags": self.cfg.get("tags") or "package",
         }
         if len(updates) == 1 and updates[0].url:
@@ -126,13 +149,14 @@ class Gotify:
         self.cfg = cfg
 
     def send(self, updates: list[Update], errors: list[str]):
+        updates = _ordered(updates)
         body = "\n".join(_markdown_lines(updates))
         if errors:
             body += ("\n\n" if body else "") + "**Some checks failed:**\n" + "\n".join(f"- {e}" for e in errors)
         payload = {
             "title": _headline(updates) if updates else "Lookout: checks failed",
             "message": body,
-            "priority": int(self.cfg.get("priority") or 5),
+            "priority": max(int(self.cfg.get("priority") or 5), 8 if any("security" in u.flags for u in updates) else 0),
             "extras": {"client::display": {"contentType": "text/markdown"}},
         }
         if len(updates) == 1 and updates[0].url:

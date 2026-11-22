@@ -95,6 +95,12 @@ def run(client: PortainerClient, p: dict) -> list[dict]:
             results.append({"target": label, "ok": True})
             log.info("updated %s through Portainer", label)
         except Exception as e:
+            if getattr(e, "status", None) == 409:
+                # Portainer is already deploying it (an earlier click, or Portainer's own
+                # auto-update). That deployment pulls the new image too.
+                results.append({"target": label, "ok": True,
+                                "note": "Portainer was already updating this; it'll finish on its own"})
+                continue
             results.append({"target": label, "ok": False, "error": str(e)})
             log.warning("updating %s failed: %s", label, e)
     return results

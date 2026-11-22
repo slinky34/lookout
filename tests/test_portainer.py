@@ -156,3 +156,19 @@ def test_unreadable_environment_shows_its_error(tmp_path, fp, monkeypatch):
     hosts = {h["id"]: h for h in app.get("/api/status").get_json()["hosts"]}
     assert hosts["pt-2"]["ok"] is False and "down" in hosts["pt-2"]["error"]
     assert len(hosts["pt-1"]["images"]) == 4
+
+
+def test_already_deploying_is_not_a_failure(tmp_path, fp, monkeypatch):
+    fp.state["busy"] = {5}
+    _, checker, app, _ = make(tmp_path, fp, no_socket, monkeypatch)
+    checker.run()
+    r = app.post("/api/hosts/pt-1/update", json={"ref": "lscr.io/linuxserver/sonarr:latest", "confirm": True}).get_json()
+    assert r["results"][0]["ok"] is True and "already updating" in r["results"][0]["note"]
+
+
+def test_portainer_and_agent_are_never_recreated_through_portainer(tmp_path, fp, monkeypatch):
+    store, checker, app, _ = make(tmp_path, fp, no_socket, monkeypatch)
+    checker.run()
+    row = next(r for r in store.data["results"]["pt-2"]["images"] if r["ref"] == "portainer/agent:latest")
+    assert row["can_update"] is False
+    assert "can't update itself" in row["members"][0]["manager"]["why"]

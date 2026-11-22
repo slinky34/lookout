@@ -110,7 +110,10 @@ def create_app(base_cfg: dict, store: Store, scheduler, password: str | None = N
 
     @app.get("/")
     def index():
-        return send_from_directory(STATIC, "index.html", max_age=0)
+        # Version-stamped asset URLs, so after an upgrade the browser never mixes an
+        # old cached script with the new page.
+        html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__V__", __version__)
+        return Response(html, mimetype="text/html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/static/<path:name>")
     def static_files(name):

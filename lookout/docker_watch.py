@@ -88,7 +88,9 @@ class DockerWatcher:
             row = {"ref": ref_text, "containers": names, "status": "ok", "reason": None,
                    "newest_tag": None, "digest_update": False, "url": None,
                    "members": [{
-                       "id": getattr(c, "id", None), "name": c.name,
+                       "id": getattr(c, "id", None), "name": c.name, "image": ref_text,
+                       "compose_dir": (c.labels or {}).get("com.docker.compose.project.working_dir"),
+                       "compose_files": (c.labels or {}).get("com.docker.compose.project.config_files"),
                        "project": (c.labels or {}).get("com.docker.compose.project"),
                        "service": (c.labels or {}).get("com.docker.compose.service"),
                    } for c in sorted(members, key=lambda c: c.name)]}
@@ -139,6 +141,8 @@ class DockerWatcher:
         prefix = key_prefix(self.host_id)
         out: list[Update] = []
         remote = self.registry.manifest_digest(ref)
+        row["local_digest"] = sorted(local_digests)[0]
+        row["remote_digest"] = remote
         if remote not in local_digests:
             row["status"] = "update"
             row["digest_update"] = True

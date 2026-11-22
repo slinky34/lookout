@@ -14,6 +14,7 @@ class Update:
     url: str | None = None
     containers: list[str] = field(default_factory=list)
     notes: str | None = None  # release notes excerpt
+    flags: list[str] = field(default_factory=list)   # "security", "breaking", "major"
 
     @property
     def summary(self) -> str:

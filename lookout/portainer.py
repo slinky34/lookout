@@ -14,6 +14,7 @@ Authentication: an access token in the X-API-Key header.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 import requests
@@ -27,7 +28,14 @@ STACK_COMPOSE = 2
 
 
 class PortainerError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+# Portainer and its agent can't be recreated through Portainer: the request would
+# stop the very process carrying it out.
+_PORTAINER_SELF = re.compile(r"^(docker\.io/)?portainer/(portainer-ce|portainer-ee|portainer|agent)(:|@|$)")
 
 
 @dataclass
@@ -74,7 +82,7 @@ class PortainerClient:
                 msg = body.get("details") or body.get("message") or ""
             except ValueError:
                 msg = r.text[:200]
-            raise PortainerError(f"Portainer answered {r.status_code}{': ' + msg if msg else ''}")
+            raise PortainerError(f"Portainer answered {r.status_code}{': ' + msg if msg else ''}", r.status_code)
         return r.json() if r.content else None
 
     # -- reading ---------------------------------------------------------------
@@ -227,4 +235,7 @@ def classify(member: dict, idx: Index | None) -> dict:
     else:
         out.update(type="container", control="total", can_update=True)
     out["container_id"] = entry["id"]
+    if _PORTAINER_SELF.match(member.get("image") or ""):
+        out.update(can_update=False,
+                   why="Portainer can't update itself or its agent. Update it from the command line on that machine.")
     return out

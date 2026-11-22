@@ -36,6 +36,13 @@ class GitHubClient:
                 return _release(rel)
         return None
 
+    def releases(self, repo: str, per_page: int = 60) -> list[dict]:
+        r = self.http.get(f"{API}/repos/{repo}/releases", params={"per_page": per_page}, timeout=self.timeout)
+        if r.status_code == 404:
+            return []
+        _raise(r, repo)
+        return r.json()
+
     def _exists(self, repo: str):
         r = self.http.get(f"{API}/repos/{repo}", timeout=self.timeout)
         if r.status_code == 404:
