@@ -1,0 +1,436 @@
+"use strict";
+
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const ui = {
+  tab: localGet("tab") || "all",
+  search: "",
+  onlyUpdates: localGet("onlyUpdates") === "1",
+  addKind: "repos",
+  status: null,
+  fastUntil: 0,
+};
+
+function localGet(k) { try { return localStorage.getItem("lookout." + k); } catch { return null; } }
+function localSet(k, v) { try { localStorage.setItem("lookout." + k, v); } catch { /* private mode */ } }
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch { /* empty */ }
+  if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status})`);
+  return data;
+}
+
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+// ---------- time ----------
+function ago(ts) {
+  if (!ts) return "never";
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 45) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} d ago`;
+}
+function until(ts) {
+  const s = ts - Date.now() / 1000;
+  if (s <= 30) return "soon";
+  if (s < 3600) return `in ${Math.round(s / 60)} min`;
+  const total = Math.round(s / 60), h = Math.floor(total / 60), m = total % 60;
+  return m ? `in ${h} h ${m} min` : `in ${h} h`;
+}
+function shortDigest(d) { return d ? d.replace("sha256:", "").slice(0, 12) : ""; }
+
+// ---------- model helpers ----------
+const STATUS_LABEL = { update: "Update", ok: "Up to date", error: "Problem", skipped: "Skipped", pending: "Checking", none: "No releases" };
+const pill = (st) => `<span class="pill ${esc(st)}">${STATUS_LABEL[st] || esc(st)}</span>`;
+const link = (url, text) => url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text);
+const tagOf = (ref) => { const last = ref.split("/").pop(); return last.includes(":") ? last.split(":").pop() : "latest"; };
+
+function containerInfo(img) {
+  if (img.status === "error" || img.status === "skipped") return esc(img.reason || "");
+  const bits = [];
+  if (img.digest_update) bits.push(`New image for <code>:${esc(tagOf(img.ref))}</code>`);
+  if (img.newest_tag) bits.push(`Newer version <code>${esc(img.newest_tag)}</code>`);
+  return bits.join(" · ") || `<span class="muted">Matches the registry</span>`;
+}
+function imageInfo(i) {
+  if (i.status === "error") return esc(i.error);
+  if (i.status === "pending") return `<span class="muted">Getting the current image…</span>`;
+  const bits = [];
+  if (i.latest_digest && i.installed_digest !== i.latest_digest) bits.push(`New image for <code>:${esc(tagOf(i.ref))}</code>`);
+  if (i.newest_tag) bits.push(`Newer version <code>${esc(i.newest_tag)}</code>`);
+  return bits.join(" · ") || `<span class="muted">No change since you added it (${esc(shortDigest(i.installed_digest))})</span>`;
+}
+function repoInfo(r) {
+  if (r.status === "error") return esc(r.error);
+  if (r.status === "pending") return `<span class="muted">Looking up releases…</span>`;
+  if (r.status === "none") return `<span class="muted">This repo hasn't published a release</span>`;
+  if (r.status === "update") return `<code>${esc(r.installed)}</code> → <code>${esc(r.latest)}</code>`;
+  return `<code>${esc(r.latest)}</code>${r.published_at ? ` <span class="muted">· released ${esc(new Date(r.published_at).toLocaleDateString())}</span>` : ""}`;
+}
+
+function collectUpdates(s) {
+  const out = [];
+  for (const h of s.hosts) for (const img of h.images) if (img.status === "update") {
+    out.push({ kind: "Container", name: img.ref, what: containerInfo(img), url: img.url,
+      where: `${img.containers.join(", ")}${s.hosts.length > 1 ? ` on ${h.name}` : ""}`,
+      hint: "Pull the new image and recreate the container to update." });
+  }
+  for (const i of s.images) if (i.status === "update") {
+    out.push({ kind: "Image", name: i.label || i.ref, what: imageInfo(i), url: i.url,
+      where: i.label ? i.ref : "", ack: ["images", i.id] });
+  }
+  for (const r of s.repos) if (r.status === "update") {
+    out.push({ kind: "GitHub", name: r.label || r.repo, what: repoInfo(r), url: r.url,
+      where: r.label ? r.repo : "", ack: ["repos", r.id] });
+  }
+  return out;
+}
+
+// ---------- render ----------
+function render() {
+  const s = ui.status;
+  if (!s) return;
+
+  // header line
+  const btn = $("#btn-check");
+  btn.classList.toggle("spin", s.checking);
+  btn.disabled = s.checking;
+  $("#btn-check span").textContent = s.checking ? "Checking…" : "Check now";
+  $("#run-status").textContent = s.checking ? "Checking for updates…"
+    : `Last check ${ago(s.last_run)} · next ${until(s.next_run)} · every ${s.interval}`;
+
+  // banner
+  $("#banner").innerHTML = s.notifiers.length ? "" : `
+    <div class="banner"><div><strong>Notifications aren't set up.</strong>
+      <span class="muted">Updates show here, but nothing gets sent until you add Discord, ntfy or Gotify.</span></div>
+      <button class="btn" data-open-settings>Set up notifications</button></div>`;
+
+  // tiles
+  const c = s.counts;
+  $("#tiles").innerHTML = `
+    <div class="tile ${c.updates ? "hot" : ""}"><div class="label">Updates available</div><div class="value">${c.updates}</div></div>
+    <div class="tile"><div class="label">Watching</div><div class="value">${c.watching}</div></div>
+    <div class="tile ${c.errors ? "bad" : ""}"><div class="label">Problems</div><div class="value">${c.errors}</div></div>
+    <div class="tile"><div class="label">Notifications</div><div class="value sm">${s.notifiers.length ? esc(s.notifiers.join(" · ")) : `<span class="muted">Not set up</span>`}</div></div>`;
+
+  // updates
+  const ups = collectUpdates(s);
+  $("#updates-section").hidden = !ups.length;
+  $("#updates").innerHTML = ups.map((u) => `
+    <div class="card">
+      <div class="card-top"><div class="name">${link(u.url, u.name)}</div><span class="kind">${u.kind}</span></div>
+      <div class="what">${u.what}</div>
+      ${u.where ? `<div class="where">${esc(u.where)}</div>` : ""}
+      ${u.hint ? `<div class="where">${esc(u.hint)}</div>` : ""}
+      ${u.ack ? `<div class="acts"><button class="btn tiny" data-ack="${u.ack[0]}:${u.ack[1]}">I've updated it</button></div>` : ""}
+    </div>`).join("");
+
+  // tab counts
+  const nCont = s.hosts.reduce((n, h) => n + h.images.length, 0);
+  const counts = { all: c.watching, containers: nCont, images: s.images.length, repos: s.repos.length };
+  for (const b of $$("#tabs button")) {
+    const t = b.dataset.tab;
+    b.setAttribute("aria-selected", String(t === ui.tab));
+    b.innerHTML = `${{ all: "All", containers: "Containers", images: "Images", repos: "GitHub" }[t]}<span class="count">${counts[t]}</span>`;
+  }
+
+  // lists
+  const q = ui.search.toLowerCase();
+  const keep = (status, ...text) => (!ui.onlyUpdates || status === "update" || status === "error")
+    && (!q || text.join(" ").toLowerCase().includes(q));
+  const show = (t) => ui.tab === "all" || ui.tab === t;
+  let html = "";
+
+  if (show("containers")) {
+    for (const h of s.hosts) {
+      const rows = h.images.filter((i) => keep(i.status, i.ref, ...i.containers));
+      const meta = h.checked_at ? `Checked ${ago(h.checked_at)}` : "Not checked yet";
+      html += `<div class="panel">
+        <div class="panel-head">
+          <h3>${hostIcon()} ${esc(h.name)} <span class="muted small">${h.url ? esc(h.url) : "local Docker"}</span></h3>
+          <div class="row gap"><span class="meta">${meta} · ${h.images.length} image${h.images.length === 1 ? "" : "s"}</span>
+            <button class="btn tiny" data-check="${esc(h.id)}">Check</button>
+            ${h.removable ? `<button class="btn tiny danger" data-remove="hosts:${esc(h.id)}" data-name="${esc(h.name)}">Remove</button>` : ""}</div>
+        </div>
+        ${h.ok === false ? `<div class="panel-error">${esc(h.error)}</div>` : ""}
+        ${rows.length ? `<ul class="rows">${rows.map((i) => `
+          <li>${pill(i.status)}
+            <div class="main"><div class="title">${link(i.url, i.ref)}</div><div class="sub">${esc(i.containers.join(", "))}</div></div>
+            <div class="info">${containerInfo(i)}</div>
+            <div class="acts"></div></li>`).join("")}</ul>`
+          : `<div class="empty">${h.images.length ? "Nothing matches the filter." : h.ok === false ? "Can't see this host's containers right now." : h.checked_at ? "No running containers to watch." : "Waiting for the first check…"}</div>`}
+        ${h.ignored.length ? `<div class="ignored">Ignored by label or settings: ${esc(h.ignored.join(", "))}</div>` : ""}
+      </div>`;
+    }
+    if (ui.tab === "containers") html += `<p class="muted small">Services on another machine? <a href="#" data-add="hosts">Add a Docker host</a> to watch all of its containers.</p>`;
+  }
+
+  if (show("images")) {
+    const rows = s.images.filter((i) => keep(i.status, i.ref, i.label || ""));
+    html += listPanel("Images", "Images for services Lookout can't see directly.", "images", rows, s.images.length, (i) => `
+      <li>${pill(i.status)}
+        <div class="main"><div class="title">${link(i.url, i.label || i.ref)}</div><div class="sub">${i.label ? esc(i.ref) + " · " : ""}checked ${ago(i.checked_at)}</div></div>
+        <div class="info">${imageInfo(i)}</div>
+        <div class="acts">${i.status === "update" ? `<button class="btn tiny" data-ack="images:${esc(i.id)}">I've updated it</button>` : ""}
+          <button class="btn tiny danger" data-remove="images:${esc(i.id)}" data-name="${esc(i.label || i.ref)}">Remove</button></div></li>`);
+  }
+
+  if (show("repos")) {
+    const rows = s.repos.filter((r) => keep(r.status, r.repo, r.label || ""));
+    html += listPanel("GitHub releases", "Apps released on GitHub.", "repos", rows, s.repos.length, (r) => `
+      <li>${pill(r.status)}
+        <div class="main"><div class="title">${link(r.url || `https://github.com/${r.repo}`, r.label || r.repo)}</div>
+          <div class="sub">${r.label ? esc(r.repo) + " · " : ""}${r.include_prereleases ? "incl. pre-releases · " : ""}checked ${ago(r.checked_at)}</div></div>
+        <div class="info">${repoInfo(r)}</div>
+        <div class="acts">${r.status === "update" ? `<button class="btn tiny" data-ack="repos:${esc(r.id)}">I've updated it</button>` : ""}
+          <button class="btn tiny danger" data-remove="repos:${esc(r.id)}" data-name="${esc(r.label || r.repo)}">Remove</button></div></li>`);
+  }
+
+  $("#lists").innerHTML = html;
+  $("#foot").textContent = `Lookout ${s.version}`;
+}
+
+function listPanel(title, blurb, kind, rows, total, row) {
+  return `<div class="panel">
+    <div class="panel-head"><h3>${title} <span class="muted small">${esc(blurb)}</span></h3>
+      <button class="btn tiny" data-add="${kind}">Add</button></div>
+    ${rows.length ? `<ul class="rows">${rows.map(row).join("")}</ul>`
+      : `<div class="empty">${total ? "Nothing matches the filter." : `Nothing here yet.<br><button class="btn" data-add="${kind}">Add ${kind === "repos" ? "GitHub repos" : "images"}</button>`}</div>`}
+  </div>`;
+}
+function hostIcon() {
+  return `<svg class="ico" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>`;
+}
+
+// ---------- data loop ----------
+async function refresh() {
+  try {
+    ui.status = await api("GET", "/api/status");
+    render();
+  } catch (e) {
+    $("#run-status").textContent = `Can't reach Lookout: ${e.message}`;
+  }
+  const fast = ui.status?.checking || Date.now() < ui.fastUntil;
+  clearTimeout(refresh.timer);
+  refresh.timer = setTimeout(refresh, fast ? 2000 : 30000);
+}
+function soon() { ui.fastUntil = Date.now() + 20000; setTimeout(refresh, 600); }
+
+async function checkNow(only) {
+  try {
+    await api("POST", "/api/check", only ? { only } : {});
+    toast(only ? "Checking…" : "Checking everything…");
+    soon();
+  } catch (e) { toast(e.message); }
+}
+
+// ---------- add dialog ----------
+function openAdd(kind = "repos") {
+  setAddKind(kind);
+  $("#add-msg").textContent = "";
+  $("#add-msg").className = "small";
+  $("#host-test").textContent = "";
+  $("#dlg-add").showModal();
+  setTimeout(() => $(`[data-pane="${kind}"] textarea, [data-pane="${kind}"] input`)?.focus(), 30);
+}
+function setAddKind(kind) {
+  ui.addKind = kind;
+  for (const b of $$("#add-kind button")) b.setAttribute("aria-pressed", String(b.dataset.kind === kind));
+  for (const p of $$(".add-pane")) p.hidden = p.dataset.pane !== kind;
+  $("#btn-add-submit").textContent = kind === "hosts" ? "Add host" : "Add";
+  $("#add-msg").textContent = "";
+}
+function addMsg(text, ok) {
+  const m = $("#add-msg");
+  m.innerHTML = text;
+  m.className = "small " + (ok ? "msg-ok" : "msg-bad");
+}
+async function submitAdd() {
+  const btn = $("#btn-add-submit");
+  btn.disabled = true;
+  try {
+    if (ui.addKind === "hosts") {
+      addMsg("Connecting…", true);
+      const r = await api("POST", "/api/hosts", { name: $("#add-host-name").value, url: $("#add-host-url").value });
+      $("#add-host-name").value = $("#add-host-url").value = "";
+      $("#dlg-add").close();
+      toast(`Added ${r.host.name}. Checking its containers…`);
+    } else {
+      const isRepos = ui.addKind === "repos";
+      const body = isRepos
+        ? { repos: $("#add-repos").value, label: $("#add-repos-label").value, include_prereleases: $("#add-repos-pre").checked }
+        : { images: $("#add-images").value, label: $("#add-images-label").value };
+      const r = await api("POST", `/api/${ui.addKind}`, body);
+      if (!r.added.length && !r.skipped.length) { addMsg("Paste at least one line.", false); return; }
+      const skipped = r.skipped.map((s) => `<br>• <code>${esc(s.value)}</code>: ${esc(s.reason)}`).join("");
+      if (r.skipped.length) {
+        addMsg(`Added ${r.added.length}. Not added:${skipped}`, r.added.length > 0);
+        if (isRepos) $("#add-repos").value = r.skipped.map((s) => s.value).join("\n");
+        else $("#add-images").value = r.skipped.map((s) => s.value).join("\n");
+      } else {
+        $("#dlg-add").close();
+        toast(`Added ${r.added.length}. Checking now…`);
+      }
+      if (r.added.length) {
+        $(isRepos ? "#add-repos-label" : "#add-images-label").value = "";
+        if (!r.skipped.length) $(isRepos ? "#add-repos" : "#add-images").value = "";
+      }
+    }
+    soon();
+  } catch (e) {
+    addMsg(esc(e.message), false);
+  } finally {
+    btn.disabled = false;
+  }
+}
+async function testHost() {
+  const out = $("#host-test");
+  out.className = "small";
+  out.textContent = "Connecting…";
+  try {
+    const r = await api("POST", "/api/hosts/test", { url: $("#add-host-url").value });
+    out.className = "small msg-ok";
+    out.textContent = `Connected to ${r.url}: ${r.containers} running container${r.containers === 1 ? "" : "s"}.`;
+  } catch (e) {
+    out.className = "small msg-bad";
+    out.textContent = e.message;
+  }
+}
+
+// ---------- settings ----------
+async function openSettings() {
+  const msg = $("#settings-msg");
+  msg.textContent = "";
+  $("#notify-test").textContent = "";
+  try {
+    fillSettings(await api("GET", "/api/settings"));
+  } catch (e) { msg.textContent = e.message; msg.className = "small msg-bad"; }
+  $("#dlg-settings").showModal();
+}
+function fillSettings(s) {
+  for (const [k, v] of Object.entries(s)) {
+    const el = $(`#s-${k}`);
+    if (!el) continue;
+    if (el.type === "checkbox") el.checked = !!v;
+    else if (el.hasAttribute("data-secret")) {
+      el.value = "";
+      el.dataset.set = v.set ? "1" : "";
+      el.placeholder = v.set ? `Saved${v.hint ? ` (${v.hint})` : ""}. Leave blank to keep, or type to replace` : (el.dataset.ph ||= el.placeholder);
+      renderClear(el, v.set);
+    } else el.value = v;
+  }
+}
+function renderClear(el, isSet) {
+  let b = el.parentElement.querySelector(".clear-secret");
+  if (!isSet) { b?.remove(); return; }
+  if (!b) {
+    b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn tiny ghost clear-secret";
+    b.textContent = "Remove saved value";
+    b.style.alignSelf = "flex-start";
+    b.addEventListener("click", () => { el.dataset.clear = "1"; el.value = ""; el.placeholder = "Will be removed when you save"; b.remove(); });
+    el.after(b);
+  }
+}
+function readSettings() {
+  const out = {};
+  for (const el of $$("#form-settings [id^='s-']")) {
+    const k = el.id.slice(2);
+    if (el.type === "checkbox") out[k] = el.checked;
+    else if (el.hasAttribute("data-secret")) out[k] = el.dataset.clear === "1" ? null : el.value.trim();
+    else out[k] = el.value.trim();
+  }
+  return out;
+}
+async function saveSettings(close = true) {
+  const msg = $("#settings-msg");
+  try {
+    const s = await api("PUT", "/api/settings", readSettings());
+    for (const el of $$("#form-settings [data-secret]")) delete el.dataset.clear;
+    fillSettings(s);
+    if (close) { $("#dlg-settings").close(); toast("Settings saved"); }
+    refresh();
+    return true;
+  } catch (e) {
+    msg.textContent = e.message;
+    msg.className = "small msg-bad";
+    return false;
+  }
+}
+async function testNotify() {
+  const out = $("#notify-test");
+  out.className = "small";
+  out.textContent = "Saving and sending…";
+  if (!(await saveSettings(false))) { out.textContent = ""; return; }
+  try {
+    const r = await api("POST", "/api/test-notify");
+    const bad = r.results.filter((x) => !x.ok);
+    out.className = "small " + (bad.length ? "msg-bad" : "msg-ok");
+    out.textContent = r.results.map((x) => x.ok ? `${x.name}: sent ✓` : `${x.name}: ${x.error}`).join(" · ");
+  } catch (e) {
+    out.className = "small msg-bad";
+    out.textContent = e.message;
+  }
+}
+
+// ---------- events ----------
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest("button, a");
+  if (!t) return;
+  if (t.matches("[data-open-settings]")) return openSettings();
+  if (t.dataset.add) { ev.preventDefault(); return openAdd(t.dataset.add); }
+  if (t.dataset.check) return checkNow([t.dataset.check]);
+  if (t.dataset.ack) {
+    const [kind, id] = t.dataset.ack.split(":");
+    t.disabled = true;
+    try { await api("POST", `/api/${kind}/${id}/ack`); toast("Marked as updated"); refresh(); }
+    catch (e) { toast(e.message); t.disabled = false; }
+    return;
+  }
+  if (t.dataset.remove) {
+    const [kind, id] = t.dataset.remove.split(":");
+    const what = kind === "hosts" ? `the host “${t.dataset.name}” and stop watching its containers` : `“${t.dataset.name}”`;
+    if (!confirm(`Remove ${what}?`)) return;
+    try { await api("DELETE", `/api/${kind}/${id}`); toast("Removed"); refresh(); }
+    catch (e) { toast(e.message); }
+  }
+});
+
+$("#btn-check").addEventListener("click", () => checkNow());
+$("#btn-add").addEventListener("click", () => openAdd(ui.tab === "images" ? "images" : ui.tab === "containers" ? "hosts" : "repos"));
+$("#btn-settings").addEventListener("click", openSettings);
+$("#form-add").addEventListener("submit", (e) => { e.preventDefault(); submitAdd(); });
+$("#btn-test-host").addEventListener("click", testHost);
+$("#form-settings").addEventListener("submit", (e) => { e.preventDefault(); saveSettings(true); });
+for (const b of $$("[data-close]")) b.addEventListener("click", () => b.closest("dialog").close());
+$("#btn-test-notify").addEventListener("click", testNotify);
+$("#btn-copy-proxy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#proxy-snippet").textContent); toast("Copied"); }
+  catch { toast("Select the text and copy it"); }
+});
+for (const b of $$("#add-kind button")) b.addEventListener("click", () => setAddKind(b.dataset.kind));
+for (const b of $$("#tabs button")) b.addEventListener("click", () => { ui.tab = b.dataset.tab; localSet("tab", ui.tab); render(); });
+$("#search").addEventListener("input", (e) => { ui.search = e.target.value; render(); });
+$("#only-updates").checked = ui.onlyUpdates;
+$("#only-updates").addEventListener("change", (e) => { ui.onlyUpdates = e.target.checked; localSet("onlyUpdates", e.target.checked ? "1" : "0"); render(); });
+$("#add-repos").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitAdd(); });
+$("#add-images").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitAdd(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+
+refresh();

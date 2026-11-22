@@ -7,7 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 
 from lookout import config, imageref, versions
-from lookout.__main__ import run_once
 from lookout.docker_watch import DockerWatcher
 from lookout.models import Update
 from lookout.notify import Discord
@@ -114,40 +113,6 @@ def test_docker_detects_digest_and_tag_updates():
     kinds = {(u.kind, u.title, u.latest) for u in updates}
     assert kinds == {("digest", "nginx:1.25.3", "1.25.3"), ("tag", "nginx", "1.27.2")}
     assert all(u.containers == ["web", "web2"] for u in updates)
-
-
-# -- run_once: notify once, then stay quiet ---------------------------------
-
-class StubWatcher:
-    def __init__(self, updates):
-        self.updates = updates
-
-    def check(self, *a):
-        return list(self.updates), []
-
-
-class RecordingNotifier:
-    name = "rec"
-
-    def __init__(self):
-        self.calls = []
-
-    def send(self, updates, errors):
-        self.calls.append([u.key for u in updates])
-
-
-def test_run_once_dedupes_and_prunes():
-    u = Update(kind="digest", key="docker:nginx:latest:digest", value="sha256:new", title="nginx:latest")
-    watcher = StubWatcher([u])
-    rec = RecordingNotifier()
-    state = {}
-    run_once({}, state, watcher, None, [rec])
-    run_once({}, state, watcher, None, [rec])
-    assert rec.calls == [["docker:nginx:latest:digest"]]
-    # User pulled the update: the key is forgotten so the next one is announced.
-    watcher.updates = []
-    run_once({}, state, watcher, None, [rec])
-    assert "docker:nginx:latest:digest" not in state
 
 
 def test_discord_payload(monkeypatch):

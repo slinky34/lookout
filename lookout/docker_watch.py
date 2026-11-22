@@ -1,9 +1,10 @@
-"""Check running containers' images against their registries."""
+"""Check a Docker host's containers against their images' registries."""
 
 from __future__ import annotations
 
 import logging
 import re
+import time
 from collections import defaultdict
 
 from . import imageref, versions
@@ -22,18 +23,30 @@ def _truthy(v: str | None) -> bool | None:
     return v.strip().lower() in ("1", "true", "yes", "on")
 
 
+def key_prefix(host_id: str) -> str:
+    # The local host keeps 0.1.x's keys so upgrading doesn't re-announce anything.
+    return "docker:" if host_id == "local" else f"docker@{host_id}:"
+
+
+def connect(url: str | None, timeout: int = 15):
+    import docker
+    return docker.DockerClient(base_url=url, timeout=timeout) if url else docker.from_env(timeout=timeout)
+
+
 class DockerWatcher:
-    def __init__(self, cfg: dict, registry: RegistryClient, docker_client=None):
+    def __init__(self, cfg: dict, registry: RegistryClient, docker_client=None,
+                 host_id: str = "local", host_name: str = "This server", url: str | None = None):
         self.cfg = cfg
         self.registry = registry
         self._client = docker_client
+        self.host_id = host_id
+        self.host_name = host_name
+        self.url = url if url is not None else cfg.get("host")
 
     @property
     def client(self):
         if self._client is None:
-            import docker
-            host = self.cfg.get("host")
-            self._client = docker.DockerClient(base_url=host) if host else docker.from_env()
+            self._client = connect(self.url)
         return self._client
 
     def _wanted(self, container) -> bool:
@@ -47,42 +60,62 @@ class DockerWatcher:
         return bool(self.cfg.get("watch_by_default", True))
 
     def check(self) -> tuple[list[Update], list[str]]:
-        """Returns (updates, errors)."""
+        """Back-compat helper: just the pending updates and errors."""
+        _, updates, errors = self.scan()
+        return updates, errors
+
+    def scan(self) -> tuple[dict, list[Update], list[str]]:
+        """Returns (host result for the dashboard, pending updates, errors).
+        Raises if the host can't be reached at all."""
         containers = self.client.containers.list(all=bool(self.cfg.get("include_stopped")))
 
-        # Group by the image reference each container was created from, so each
-        # image is checked once and the notification lists every container using it.
         groups: dict[str, list] = defaultdict(list)
+        ignored: list[str] = []
         for c in containers:
             if not self._wanted(c):
+                ignored.append(c.name)
                 continue
             ref_text = (c.attrs.get("Config") or {}).get("Image") or ""
-            if not ref_text or ref_text.startswith("sha256:"):
-                log.debug("skip %s: created from an image ID, not a name", c.name)
-                continue
             groups[ref_text].append(c)
 
+        images: list[dict] = []
         updates: list[Update] = []
         errors: list[str] = []
         for ref_text, members in sorted(groups.items()):
+            names = sorted(c.name for c in members)
+            row = {"ref": ref_text, "containers": names, "status": "ok", "reason": None,
+                   "newest_tag": None, "digest_update": False, "url": None}
             try:
-                updates.extend(self._check_image(ref_text, members))
+                row_updates = self._check_image(ref_text, members, row)
+                updates.extend(row_updates)
             except RegistryError as e:
-                errors.append(str(e))
-                log.warning("%s", e)
-            except Exception as e:  # keep going if one image is odd
-                errors.append(f"{ref_text}: {e}")
-                log.exception("checking %s failed", ref_text)
-        return updates, errors
+                row.update(status="error", reason=str(e))
+                errors.append(f"{self.host_name}: {e}")
+                log.warning("%s: %s", self.host_name, e)
+            except Exception as e:
+                row.update(status="error", reason=str(e))
+                errors.append(f"{self.host_name}: {ref_text}: {e}")
+                log.exception("checking %s on %s failed", ref_text, self.host_name)
+            images.append(row)
 
-    def _check_image(self, ref_text: str, members: list) -> list[Update]:
+        result = {
+            "id": self.host_id, "name": self.host_name, "url": self.url,
+            "ok": True, "error": None, "checked_at": int(time.time()),
+            "images": images, "ignored": sorted(ignored),
+        }
+        return result, updates, errors
+
+    def _check_image(self, ref_text: str, members: list, row: dict) -> list[Update]:
+        names = row["containers"]
+        if not ref_text or ref_text.startswith("sha256:"):
+            row.update(status="skipped", reason="Created from an image ID, not a name")
+            return []
         ref = imageref.parse(ref_text)
-        names = sorted(c.name for c in members)
+        row["url"] = image_url(ref)
         if ref.digest:
-            log.debug("skip %s: pinned to a digest", ref)
+            row.update(status="skipped", reason="Pinned to a digest")
             return []
 
-        # Digests the containers' images were pulled as. Locally built images have none.
         local_digests: set[str] = set()
         for c in members:
             try:
@@ -92,33 +125,39 @@ class DockerWatcher:
             for rd in image_attrs.get("RepoDigests") or []:
                 local_digests.add(rd.split("@", 1)[-1])
         if not local_digests:
-            log.info("skip %s (%s): built locally or never pulled from a registry", ref, ", ".join(names))
+            row.update(status="skipped", reason="Built locally, so there's no registry copy to compare")
             return []
 
+        where = [n if self.host_id == "local" else f"{n} ({self.host_name})" for n in names]
+        prefix = key_prefix(self.host_id)
         out: list[Update] = []
         remote = self.registry.manifest_digest(ref)
-        log.info("%s: local %s, remote %s", ref, ",".join(d[:19] for d in local_digests), remote[:19])
         if remote not in local_digests:
+            row["status"] = "update"
+            row["digest_update"] = True
             out.append(Update(
-                kind="digest", key=f"docker:{ref}:digest", value=remote, title=str(ref),
-                current=ref.tag, latest=ref.tag, containers=names, url=_image_url(ref),
+                kind="digest", key=f"{prefix}{ref}:digest", value=remote, title=str(ref),
+                current=ref.tag, latest=ref.tag, containers=where, url=row["url"],
             ))
 
         check_tags = bool(self.cfg.get("check_new_tags", True))
-        labels = members[0].labels or {}
-        if _truthy(labels.get(LABEL_TAGS)) is not None:
-            check_tags = _truthy(labels.get(LABEL_TAGS))
+        label = _truthy((members[0].labels or {}).get(LABEL_TAGS))
+        if label is not None:
+            check_tags = label
         if check_tags and ref.tag and versions.parse(ref.tag):
             newest = versions.newest_tag(ref.tag, self.registry.list_tags(ref))
             if newest:
+                row["newest_tag"] = newest
+                if row["status"] == "ok":
+                    row["status"] = "update"
                 out.append(Update(
-                    kind="tag", key=f"docker:{ref}:tag", value=newest, title=ref.name,
-                    current=ref.tag, latest=newest, containers=names, url=_image_url(ref),
+                    kind="tag", key=f"{prefix}{ref}:tag", value=newest, title=ref.name,
+                    current=ref.tag, latest=newest, containers=where, url=row["url"],
                 ))
         return out
 
 
-def _image_url(ref) -> str | None:
+def image_url(ref) -> str | None:
     if ref.is_docker_hub:
         repo = ref.repository
         if repo.startswith("library/"):

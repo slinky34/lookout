@@ -1,21 +1,15 @@
-"""Check GitHub repositories for new releases."""
+"""Look up the latest release of a GitHub repository."""
 
 from __future__ import annotations
 
-import logging
-
 import requests
-
-from .models import Update
-
-log = logging.getLogger(__name__)
 
 API = "https://api.github.com"
 
 
-class GitHubWatcher:
-    def __init__(self, cfg: dict, session: requests.Session | None = None, timeout: float = 20.0):
-        self.cfg = cfg
+class GitHubClient:
+    def __init__(self, token: str | None = None, session: requests.Session | None = None,
+                 timeout: float = 20.0):
         self.timeout = timeout
         self.http = session or requests.Session()
         self.http.headers.update({
@@ -23,71 +17,46 @@ class GitHubWatcher:
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "lookout-update-watcher",
         })
-        if cfg.get("token"):
-            self.http.headers["Authorization"] = f"Bearer {cfg['token']}"
+        if token:
+            self.http.headers["Authorization"] = f"Bearer {token}"
 
-    def _repos(self) -> list[dict]:
-        out = []
-        for entry in self.cfg.get("repos") or []:
-            if isinstance(entry, str):
-                entry = {"repo": entry}
-            entry.setdefault("include_prereleases", self.cfg.get("include_prereleases", False))
-            out.append(entry)
-        return out
-
-    def check(self, state: dict) -> tuple[list[Update], list[str]]:
-        updates: list[Update] = []
-        errors: list[str] = []
-        for entry in self._repos():
-            repo = entry["repo"].strip().strip("/")
-            try:
-                rel = self._latest(repo, bool(entry["include_prereleases"]))
-            except Exception as e:
-                errors.append(f"GitHub {repo}: {e}")
-                log.warning("GitHub %s: %s", repo, e)
-                continue
-            if rel is None:
-                log.info("%s: no releases yet", repo)
-                continue
-            tag = rel["tag_name"]
-            key = f"github:{repo}"
-            previous = state.get(key)
-            log.info("%s: latest release %s (last seen %s)", repo, tag, previous or "none")
-            if previous is None:
-                # First time we see this repo: remember where it is, don't announce
-                # an old release as if it were new.
-                state[key] = tag
-                continue
-            if tag != previous:
-                updates.append(Update(
-                    kind="release", key=key, value=tag, title=repo,
-                    current=previous, latest=tag, url=rel.get("html_url"),
-                    notes=_excerpt(rel.get("body") or ""),
-                ))
-        return updates, errors
-
-    def _latest(self, repo: str, prereleases: bool) -> dict | None:
+    def latest(self, repo: str, prereleases: bool = False) -> dict | None:
+        """{"tag", "url", "notes", "published_at"} or None if the repo has no releases."""
         if not prereleases:
             r = self.http.get(f"{API}/repos/{repo}/releases/latest", timeout=self.timeout)
             if r.status_code == 404:
+                self._exists(repo)
                 return None
-            _raise(r)
-            return r.json()
+            _raise(r, repo)
+            return _release(r.json())
         r = self.http.get(f"{API}/repos/{repo}/releases", params={"per_page": 10}, timeout=self.timeout)
-        _raise(r)
+        _raise(r, repo)
         for rel in r.json():
             if not rel.get("draft"):
-                return rel
+                return _release(rel)
         return None
 
+    def _exists(self, repo: str):
+        r = self.http.get(f"{API}/repos/{repo}", timeout=self.timeout)
+        if r.status_code == 404:
+            raise RuntimeError(f"{repo} doesn't exist or is private (private repos need a GitHub token)")
+        _raise(r, repo)
 
-def _raise(r):
-    if r.status_code == 403 and r.headers.get("X-RateLimit-Remaining") == "0":
-        raise RuntimeError("GitHub rate limit hit; add a github.token to raise it")
+
+def _release(rel: dict) -> dict:
+    return {
+        "tag": rel["tag_name"], "url": rel.get("html_url"),
+        "notes": excerpt(rel.get("body") or ""), "published_at": rel.get("published_at"),
+    }
+
+
+def _raise(r, repo):
+    if r.status_code in (403, 429) and r.headers.get("X-RateLimit-Remaining") == "0":
+        raise RuntimeError("GitHub rate limit hit; add a GitHub token in Settings to raise it")
     if r.status_code >= 400:
-        raise RuntimeError(f"GitHub answered {r.status_code}")
+        raise RuntimeError(f"GitHub answered {r.status_code} for {repo}")
 
 
-def _excerpt(body: str, limit: int = 600) -> str:
+def excerpt(body: str, limit: int = 600) -> str:
     body = body.strip()
     return body if len(body) <= limit else body[:limit].rsplit("\n", 1)[0] + "\n…"

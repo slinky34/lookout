@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lookout</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23f59e0b'/%3E%3Cpath d='M6 16s4-7 10-7 10 7 10 7-4 7-10 7S6 16 6 16z' fill='none' stroke='%23111' stroke-width='2.4'/%3E%3Ccircle cx='16' cy='16' r='3.4' fill='%23111'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M6 16s4-7 10-7 10 7 10 7-4 7-10 7S6 16 6 16z"/><circle cx="16" cy="16" r="3.4"/></svg>
+        </span>
+        <div>
+          <h1>Lookout</h1>
+          <p id="run-status" class="muted small">Loading…</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="btn-check" class="btn">
+          <svg class="ico" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>
+          <span>Check now</span>
+        </button>
+        <button id="btn-add" class="btn primary">
+          <svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          <span>Add</span>
+        </button>
+        <button id="btn-settings" class="btn icon-only" title="Settings" aria-label="Settings">
+          <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div id="banner"></div>
+
+    <section class="tiles" id="tiles"></section>
+
+    <section id="updates-section" class="block" hidden>
+      <div class="block-head"><h2>Updates available</h2></div>
+      <div id="updates" class="cards"></div>
+    </section>
+
+    <section class="block">
+      <div class="block-head toolbar">
+        <div class="tabs" role="tablist" id="tabs">
+          <button role="tab" data-tab="all" aria-selected="true">All</button>
+          <button role="tab" data-tab="containers">Containers</button>
+          <button role="tab" data-tab="images">Images</button>
+          <button role="tab" data-tab="repos">GitHub</button>
+        </div>
+        <div class="filters">
+          <input id="search" type="search" placeholder="Filter…" aria-label="Filter">
+          <label class="check"><input type="checkbox" id="only-updates"> Updates only</label>
+        </div>
+      </div>
+      <div id="lists"></div>
+    </section>
+
+    <footer class="muted small foot" id="foot"></footer>
+  </main>
+
+  <!-- Add dialog -->
+  <dialog id="dlg-add" class="dlg">
+    <form class="dlg-inner" id="form-add">
+      <div class="dlg-head">
+        <h3>Add to Lookout</h3>
+        <button type="button" class="btn ghost icon-only" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="seg" id="add-kind">
+        <button type="button" data-kind="repos" aria-pressed="true">GitHub repos</button>
+        <button type="button" data-kind="images">Container images</button>
+        <button type="button" data-kind="hosts">Docker host</button>
+      </div>
+
+      <div class="add-pane" data-pane="repos">
+        <p class="muted small">For apps released on GitHub. Paste one per line, as <code>owner/name</code> or the repo's URL.</p>
+        <label class="field"><span>Repos</span>
+          <textarea id="add-repos" rows="5" placeholder="home-assistant/core&#10;https://github.com/immich-app/immich&#10;slinky34/hearth-ha"></textarea>
+        </label>
+        <label class="field single-only"><span>Name <em>(optional, for a single repo)</em></span>
+          <input id="add-repos-label" placeholder="e.g. Immich on the NAS"></label>
+        <label class="check"><input type="checkbox" id="add-repos-pre"> Include pre-releases (betas, RCs)</label>
+      </div>
+
+      <div class="add-pane" data-pane="images" hidden>
+        <p class="muted small">For services that don't run on a Docker host Lookout can see. Paste the image each one uses, one per line. Lookout remembers what's published now and tells you when that changes.</p>
+        <label class="field"><span>Images</span>
+          <textarea id="add-images" rows="5" placeholder="lscr.io/linuxserver/sonarr:latest&#10;ghcr.io/home-assistant/home-assistant:stable&#10;nginx:1.27.2"></textarea>
+        </label>
+        <label class="field single-only"><span>Name <em>(optional, for a single image)</em></span>
+          <input id="add-images-label" placeholder="e.g. Sonarr on the NAS"></label>
+      </div>
+
+      <div class="add-pane" data-pane="hosts" hidden>
+        <p class="muted small">Watch every container on another machine at once. That machine needs a read-only Docker API, which the snippet below sets up.</p>
+        <label class="field"><span>Name</span><input id="add-host-name" placeholder="e.g. NAS"></label>
+        <label class="field"><span>Address</span><input id="add-host-url" placeholder="192.168.1.20:2375"></label>
+        <div class="row gap">
+          <button type="button" class="btn" id="btn-test-host">Test connection</button>
+          <span id="host-test" class="small"></span>
+        </div>
+        <details class="howto">
+          <summary>Set up the other machine (one-time)</summary>
+          <p class="small muted">In Portainer on that machine (or with <code>docker compose</code>), deploy this stack. It exposes only read access to containers and images, on port 2375. Use it only on your home network.</p>
+          <pre id="proxy-snippet">services:
+  docker-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    container_name: docker-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "2375:2375"</pre>
+          <button type="button" class="btn small-btn" id="btn-copy-proxy">Copy</button>
+        </details>
+      </div>
+
+      <p id="add-msg" class="small" role="status"></p>
+      <div class="dlg-foot">
+        <button type="button" class="btn ghost" data-close>Cancel</button>
+        <button type="submit" class="btn primary" id="btn-add-submit">Add</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Settings dialog -->
+  <dialog id="dlg-settings" class="dlg">
+    <form class="dlg-inner" id="form-settings">
+      <div class="dlg-head">
+        <h3>Settings</h3>
+        <button type="button" class="btn ghost icon-only" data-close aria-label="Close">✕</button>
+      </div>
+
+      <h4>Notifications</h4>
+      <label class="field"><span>Discord webhook URL</span>
+        <input id="s-discord_webhook_url" data-secret placeholder="https://discord.com/api/webhooks/…" autocomplete="off"></label>
+      <div class="grid2">
+        <label class="field"><span>ntfy topic URL</span>
+          <input id="s-ntfy_url" placeholder="https://ntfy.sh/your-topic"></label>
+        <label class="field"><span>ntfy token <em>(optional)</em></span>
+          <input id="s-ntfy_token" data-secret autocomplete="off"></label>
+      </div>
+      <div class="grid2">
+        <label class="field"><span>Gotify server URL</span>
+          <input id="s-gotify_url" placeholder="https://gotify.example.com"></label>
+        <label class="field"><span>Gotify app token</span>
+          <input id="s-gotify_token" data-secret autocomplete="off"></label>
+      </div>
+      <div class="row gap">
+        <button type="button" class="btn" id="btn-test-notify">Send test notification</button>
+        <span id="notify-test" class="small"></span>
+      </div>
+
+      <h4>Checking</h4>
+      <div class="grid2">
+        <label class="field"><span>Check every</span>
+          <input id="s-interval" placeholder="6h"><em class="hint">e.g. 30m, 6h, 1d</em></label>
+        <label class="field"><span>GitHub token <em>(optional)</em></span>
+          <input id="s-github_token" data-secret autocomplete="off"><em class="hint">Raises GitHub's limit from 60 to 5000 checks an hour</em></label>
+      </div>
+      <label class="check"><input type="checkbox" id="s-watch_by_default"> Watch every container (otherwise only ones labelled <code>lookout.enable=true</code>)</label>
+      <label class="check"><input type="checkbox" id="s-check_new_tags"> Tell me about newer version tags (e.g. 1.25.3 → 1.27.2)</label>
+      <label class="check"><input type="checkbox" id="s-include_stopped"> Include stopped containers</label>
+      <label class="check"><input type="checkbox" id="s-notify_errors"> Notify me when a check fails</label>
+
+      <p id="settings-msg" class="small" role="status"></p>
+      <div class="dlg-foot">
+        <button type="button" class="btn ghost" data-close>Cancel</button>
+        <button type="submit" class="btn primary" id="btn-save-settings">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

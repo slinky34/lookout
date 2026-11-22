@@ -1,10 +1,11 @@
-# Lookout: tells you when your containers' images or watched GitHub projects update.
-# It only reads; it never pulls images or restarts anything.
+# Lookout: dashboard + notifications for updates to your containers, other Docker
+# hosts, images and GitHub releases. It only reads; it never pulls or restarts anything.
 #
-#   cp .env.example .env              # add your Discord webhook / ntfy / Gotify
-#   cp config.example.yaml config/config.yaml  # optional: GitHub repos, schedule, exclusions
 #   docker compose up -d
-#   docker compose run --rm lookout --test-notify   # check notifications work
+#   open http://<server>:18099 and add notifications, repos and hosts there
+#
+# Everything can be set in the dashboard. The environment variables below are optional
+# starting values (handy in Portainer); values saved in the dashboard take priority.
 
 services:
   lookout:
@@ -12,12 +13,18 @@ services:
     # build: .   # to build from this folder instead
     container_name: lookout
     restart: unless-stopped
-    env_file: .env
+    ports:
+      - "18099:18099"
     environment:
-      TZ: "${TZ:-UTC}"
+      TZ: ${TZ:-UTC}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      NTFY_URL: ${NTFY_URL:-}
+      GITHUB_REPOS: ${GITHUB_REPOS:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Ask for a password before showing the dashboard (any username works):
+      LOOKOUT_PASSWORD: ${LOOKOUT_PASSWORD:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./config:/config:ro   # holds config.yaml (optional)
       - lookout-data:/data
 
 volumes:
